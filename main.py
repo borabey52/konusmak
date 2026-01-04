@@ -16,14 +16,12 @@ try:
         os.environ["GOOGLE_API_KEY"] = api_key
         genai.configure(api_key=api_key)
     else:
-        api_key = st.sidebar.text_input("Google API Key:", type="password")
-        if api_key:
-            os.environ["GOOGLE_API_KEY"] = api_key
-            genai.configure(api_key=api_key)
+        # Eğer secrets yoksa sidebar'dan girilmesine izin ver
+        pass
 except Exception as e:
     st.error(f"API Hatası: {e}")
 
-# --- 2. VERİTABANI ---
+# --- 2. VERİTABANI İŞLEMLERİ ---
 def init_db():
     conn = sqlite3.connect('okul_sinav.db')
     c = conn.cursor()
@@ -51,11 +49,24 @@ def sonuc_kaydet(ad, no, konu, metin, puan, detaylar, ses_path):
     conn.commit()
     conn.close()
 
+def sonuclari_listele():
+    """Veritabanındaki son 50 sonucu getirir."""
+    conn = sqlite3.connect('okul_sinav.db')
+    try:
+        df = pd.read_sql_query("SELECT ad_soyad, puan_100luk, konu, tarih FROM sonuclar ORDER BY id DESC LIMIT 50", conn)
+        # Tarihi daha okunabilir yapalım
+        df['tarih'] = pd.to_datetime(df['tarih']).dt.strftime('%d-%m %H:%M')
+        df.columns = ["Ad Soyad", "Puan", "Konu", "Tarih"]
+        return df
+    except:
+        return pd.DataFrame()
+    finally:
+        conn.close()
+
 # --- 3. EXCEL VE SES KAYDI ---
 def konulari_getir():
     dosya_yolu = "konusma_konulari.xlsx"
     if not os.path.exists(dosya_yolu):
-        # Dosya yoksa örnek oluştur
         data = {
             'Konu': ['Teknoloji Bağımlılığı', 'Doğa Sevgisi'],
             'Giriş': ['Bağımlılık tanımı', 'Doğanın önemi'],
@@ -88,7 +99,7 @@ def sesi_kalici_kaydet(audio_bytes, ad_soyad):
         f.write(audio_bytes)
     return dosya_yolu
 
-# --- 4. YAPAY ZEKA ANALİZİ ---
+# --- 4. YAPAY ZEKA ---
 def sesi_dogrudan_analiz_et(audio_bytes, konu, detaylar, status_container):
     try:
         model = genai.GenerativeModel('gemini-1.5-flash')
@@ -115,7 +126,7 @@ def sesi_dogrudan_analiz_et(audio_bytes, konu, detaylar, status_container):
         GÖREV:
         1. Transkripti çıkar.
         2. Kriterlere 1-3 arası puan ver (3:İyi, 2:Orta, 1:Zayıf).
-        3. Puanı hesapla: (Toplam Puan / 12) * 100
+        3. Puanı hesapla: (Toplam Puan / 12) * 100.
         
         KRİTERLER: İçerik, Düzen, Dil, Akıcılık.
         
@@ -128,37 +139,69 @@ def sesi_dogrudan_analiz_et(audio_bytes, konu, detaylar, status_container):
         }}
         """
         response = model.generate_content([audio_file, prompt])
-        
         try:
             audio_file.delete()
             os.remove(temp_filename)
         except:
             pass
-            
-        text = response.text.replace("```json", "").replace("```", "").strip()
-        return json.loads(text)
+        return json.loads(response.text.replace("```json", "").replace("```", "").strip())
     except Exception as e:
         return {"yuzluk_sistem_puani": 0, "transkript": "Hata", "ogretmen_yorumu": str(e)}
 
-# --- 5. ARAYÜZ (GÖRSEL DÜZELTMELER BURADA) ---
+# --- 5. ARAYÜZ ---
 init_db()
 
-st.markdown("""<style>.block-container {padding-top: 1rem;}</style>""", unsafe_allow_html=True)
+# CSS ile Sol Panel (Sidebar) Genişliğini Ayarlama
+st.markdown(
+    """
+    <style>
+    [data-testid="stSidebar"][aria-expanded="true"] > div:first-child {
+        width: 350px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
-col_left, col_center, col_right = st.columns([1, 8, 1]) # Orta kısmı genişlettik
+# --- SOL PANEL (GEÇMİŞ SONUÇLAR) ---
+with st.sidebar:
+    st.image("https://cdn-icons-png.flaticon.com/512/3135/3135715.png", width=80)
+    st.title("Sınav Geçmişi")
+    
+    # API Key Kontrolü (Sidebar'da da görünür olsun)
+    if "GOOGLE_API_KEY" not in os.environ:
+        api_input = st.text_input("API Key Giriniz:", type="password")
+        if api_input:
+            os.environ["GOOGLE_API_KEY"] = api_input
+            genai.configure(api_key=api_input)
+            st.success("Key kaydedildi!")
+    
+    st.markdown("---")
+    
+    # Veritabanından verileri çek
+    df_sonuclar = sonuclari_listele()
+    if not df_sonuclar.empty:
+        st.dataframe(df_sonuclar, hide_index=True, use_container_width=True)
+    else:
+        st.info("Henüz sınav kaydı yok.")
+        
+    st.markdown("---")
+    st.caption("Veriler 'okul_sinav.db' dosyasında saklanır.")
+
+# --- ANA EKRAN DÜZENİ ---
+# Buradaki [1, 2, 1] oranı orta sütunu daraltarak daha derli toplu görünmesini sağlar
+col_left, col_center, col_right = st.columns([1, 2, 1])
 
 with col_center:
     st.title("🎤 Dijital Konuşma Sınavı")
     st.markdown("---")
 
-    # Öğrenci Bilgileri
     c1, c2 = st.columns(2)
     with c1: ad_soyad = st.text_input("Öğrenci Adı Soyadı")
     with c2: sinif_no = st.text_input("Sınıf / Numara")
     
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Konu Seçimi ve Plan Gösterimi
     konular = konulari_getir()
     secilen_konu = None
     
@@ -167,86 +210,63 @@ with col_center:
         
         if secilen_konu:
             detay = konular[secilen_konu]
-            
-            # --- DÜZELTME 1: KONUŞMA PLANI (Kutucuklu Tasarım) ---
-            st.markdown(f"### 📋 {secilen_konu} - Konuşma Planı")
+            st.markdown(f"### 📋 {secilen_konu} - Plan")
             k1, k2, k3 = st.columns(3)
-            with k1:
-                st.info(f"**1. GİRİŞ**\n\n{detay['Giriş']}")
-            with k2:
-                st.warning(f"**2. GELİŞME**\n\n{detay['Gelişme']}")
-            with k3:
-                st.success(f"**3. SONUÇ**\n\n{detay['Sonuç']}")
-            # ----------------------------------------------------
+            with k1: st.info(f"**GİRİŞ**\n\n{detay['Giriş']}")
+            with k2: st.warning(f"**GELİŞME**\n\n{detay['Gelişme']}")
+            with k3: st.success(f"**SONUÇ**\n\n{detay['Sonuç']}")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # --- DÜZELTME 2: PUANLAMA KRİTERLERİ (HTML Tablo Geri Geldi) ---
+    # Kriter Tablosu
     rubric_html = """
     <style>
-        .rubric-table {width: 100%; border-collapse: collapse; font-size: 0.9em; margin-bottom: 20px;}
-        .rubric-table th {background-color: #f8f9fa; border: 1px solid #dee2e6; padding: 8px; text-align: left;}
-        .rubric-table td {border: 1px solid #dee2e6; padding: 8px;}
-        .rubric-header {background-color: #e9ecef; font-weight: bold;}
+        .rubric-table {width: 100%; border-collapse: collapse; font-size: 0.85em; margin-bottom: 20px;}
+        .rubric-table th {background-color: #f8f9fa; border: 1px solid #dee2e6; padding: 6px; text-align: left;}
+        .rubric-table td {border: 1px solid #dee2e6; padding: 6px;}
     </style>
     <h4>⚖️ Puanlama Kriterleri</h4>
     <table class="rubric-table">
         <tr>
-            <th style="width: 20%;">Kriter</th>
-            <th style="width: 65%;">Açıklama</th>
-            <th style="width: 15%; text-align: center;">Puan (1-3)</th>
+            <th>Kriter</th><th>Açıklama</th><th>Puan</th>
         </tr>
-        <tr>
-            <td class="rubric-header">1. İçerik</td>
-            <td>Konuya hakimiyet, verilen plana (Giriş-Gelişme-Sonuç) uyum.</td>
-            <td style="text-align: center;">1 - 3</td>
-        </tr>
-        <tr>
-            <td class="rubric-header">2. Düzen</td>
-            <td>Konuşmanın bütünlüğü, fikirlerin sıralanışı.</td>
-            <td style="text-align: center;">1 - 3</td>
-        </tr>
-        <tr>
-            <td class="rubric-header">3. Dil</td>
-            <td>Kelime zenginliği ve dil bilgisi kurallarına uygunluk.</td>
-            <td style="text-align: center;">1 - 3</td>
-        </tr>
-        <tr>
-            <td class="rubric-header">4. Akıcılık</td>
-            <td>Telaffuz, vurgu, tonlama ve akıcı anlatım.</td>
-            <td style="text-align: center;">1 - 3</td>
-        </tr>
+        <tr><td><b>1. İçerik</b></td><td>Konuya ve plana uyum</td><td>1-3</td></tr>
+        <tr><td><b>2. Düzen</b></td><td>Giriş-Gelişme-Sonuç bütünlüğü</td><td>1-3</td></tr>
+        <tr><td><b>3. Dil</b></td><td>Kelime ve gramer</td><td>1-3</td></tr>
+        <tr><td><b>4. Akıcılık</b></td><td>Telaffuz ve tonlama</td><td>1-3</td></tr>
     </table>
     """
     st.markdown(rubric_html, unsafe_allow_html=True)
-    # ------------------------------------------------------------
 
     st.markdown("### 🎙️ Kaydı Başlat")
     ses_kaydi = st.audio_input("Mikrofona tıklayın")
 
     if ses_kaydi and secilen_konu:
-        if st.button("Sınavı Bitir ve Puanla", type="primary", use_container_width=True):
+        if st.button("Bitir ve Puanla", type="primary", use_container_width=True):
             if not ad_soyad:
-                st.warning("⚠️ Lütfen öğrenci ismini giriniz.")
+                st.warning("⚠️ Önce öğrenci adını giriniz.")
             else:
                 with st.status("Değerlendiriliyor...", expanded=True) as status:
-                    # 1. Kayıt
+                    # Kayıt
                     audio_bytes = ses_kaydi.getvalue()
                     kayit_yolu = sesi_kalici_kaydet(audio_bytes, ad_soyad)
-                    st.write(f"Ses arşivlendi: {kayit_yolu}")
                     
-                    # 2. Analiz
+                    # Analiz
                     sonuc = sesi_dogrudan_analiz_et(audio_bytes, secilen_konu, konular[secilen_konu], status)
                     
-                    # 3. Veritabanı
+                    # Veritabanı
                     puan = sonuc.get("yuzluk_sistem_puani", 0)
                     transkript = sonuc.get("transkript", "")
                     sonuc_kaydet(ad_soyad, sinif_no, secilen_konu, transkript, puan, sonuc, kayit_yolu)
                     
                     status.update(label="Tamamlandı!", state="complete", expanded=False)
+                    
+                    # Sayfayı yenilemeden sidebar'ı güncellemek için rerun (isteğe bağlı)
+                    # st.rerun() 
+                    
                     st.balloons()
 
-                    # SONUÇ EKRANI
+                    # Sonuç Gösterimi
                     st.markdown(f"""
                     <div style="background-color: #dcfce7; border: 2px solid #22c55e; border-radius: 12px; padding: 15px; text-align: center; margin-bottom: 20px;">
                         <h2 style="margin:0; color:#166534;">PUAN: {puan}</h2>
@@ -255,7 +275,7 @@ with col_center:
                     
                     with st.container(border=True):
                         st.subheader("Sonuç Detayları")
-                        st.info(f"**Öğretmen Yorumu:** {sonuc.get('ogretmen_yorumu')}")
+                        st.info(f"**Yorum:** {sonuc.get('ogretmen_yorumu')}")
                         st.text_area("Transkript", transkript, height=150)
                         
                         kp = sonuc.get("kriter_puanlari", {})
