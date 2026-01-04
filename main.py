@@ -7,11 +7,12 @@ from datetime import datetime
 import google.generativeai as genai
 import time
 
-# --- 2. AYARLAR ---
+# --- 2. AYARLAR (EN KRİTİK BÖLÜM) ---
+# API Key hatasını önlemek için Environment Variable olarak EN BAŞTA tanımlıyoruz.
 try:
     if "GOOGLE_API_KEY" in st.secrets:
-        # Şifreyi al ve yapılandır
         api_key = st.secrets["GOOGLE_API_KEY"]
+        os.environ["GOOGLE_API_KEY"] = api_key  # Bu satır File API hatasını çözer
         genai.configure(api_key=api_key)
     else:
         st.error("Lütfen Streamlit panelinden API Key ekleyin.")
@@ -66,57 +67,74 @@ def konulari_getir():
     except Exception:
         return {}
 
-# --- 5. SES ANALİZİ (INLINE DATA YÖNTEMİ - HATA VERMEZ) ---
-def sesi_dogrudan_analiz_et(audio_bytes, konu, detaylar):
+# --- 5. SES ANALİZİ (HIZLI VERSİYON) ---
+def sesi_dogrudan_analiz_et(audio_bytes, konu, detaylar, status_container):
     try:
         model = genai.GenerativeModel('gemini-flash-latest')
         
-        # PROMPT HAZIRLIĞI
+        # Adım 1: Dosyayı geçici olarak kaydet
+        status_container.update(label="Ses dosyası işleniyor...", state="running")
+        temp_filename = "ogrenci_sesi.wav"
+        with open(temp_filename, "wb") as f:
+            f.write(audio_bytes)
+        
+        # Adım 2: Google'a Yükle (En hızlı yöntem budur)
+        status_container.update(label="Ses Google sunucularına gönderiliyor...", state="running")
+        
+        # Hata önleyici yapılandırma tekrarı
+        if "GOOGLE_API_KEY" in st.secrets:
+            genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+            
+        audio_file = genai.upload_file(temp_filename)
+        
+        # Dosyanın hazır olmasını bekle
+        while audio_file.state.name == "PROCESSING":
+            time.sleep(0.5) # Bekleme süresini kısalttık
+            audio_file = genai.get_file(audio_file.name)
+            
+        # Adım 3: Analiz İste
+        status_container.update(label="Yapay zeka puanlıyor...", state="running")
+        
         prompt = f"""
-        Sen bir Türkçe öğretmenisin. Sana gönderdiğim ses dosyasını DİNLE ve değerlendir.
+        Sen bir Türkçe öğretmenisin. Bu ses kaydını dinle.
         
         SINAV KONUSU: {konu}
-        BEKLENEN PLAN:
-        - Giriş: {detaylar['Giriş']}
-        - Gelişme: {detaylar['Gelişme']}
-        - Sonuç: {detaylar['Sonuç']}
+        BEKLENEN: {detaylar['Giriş']}, {detaylar['Gelişme']}, {detaylar['Sonuç']}
         
-        GÖREVLERİN:
-        1. Öğrencinin ne dediğini tam olarak yazıya dök (Transkript).
-        2. Yazıya dökerken imla kurallarına göre düzelt.
-        3. Ses tonunu, vurguları ve akıcılığı da dikkate alarak puanla.
+        GÖREV:
+        1. Transkripti çıkar (imla kurallarına uyarak).
+        2. Aşağıdaki kriterlere göre 1-3 arası puanla.
         
-        KRİTERLER (Her biri 1-3 Puan):
-        1. Konu ve İçerik (Konuya hakim mi?)
-        2. Düzen (Giriş-Gelişme-Sonuç var mı?)
-        3. Dili Kullanma (Kelime dağarcığı)
-        4. Akıcılık (Duraksamalar, "ııı"lamalar, tonlama, vurgu)
+        KRİTERLER:
+        - İçerik
+        - Düzen
+        - Dil
+        - Akıcılık
         
-        SADECE JSON FORMATINDA CEVAP VER:
+        JSON FORMATI:
         {{
-            "transkript": "Buraya öğrencinin konuşmasının metnini yaz.",
+            "transkript": "...",
             "kriter_puanlari": {{ "konu_icerik": 2, "duzen": 2, "dil": 2, "akicilik": 2 }},
             "toplam_ham_puan": 8,
             "yuzluk_sistem_puani": 66,
-            "ogretmen_yorumu": "Buraya yorumunu yaz."
+            "ogretmen_yorumu": "..."
         }}
         """
         
-        # --- KRİTİK DEĞİŞİKLİK ---
-        # Dosya yüklemek (upload_file) yerine, veriyi doğrudan paketin içine koyuyoruz.
-        # Bu yöntem File API kullanmaz, bu yüzden o hatayı vermesi imkansızdır.
-        ses_verisi = {
-            "mime_type": "audio/wav",
-            "data": audio_bytes
-        }
+        response = model.generate_content([audio_file, prompt])
         
-        response = model.generate_content([prompt, ses_verisi])
-        
+        # Temizlik
+        try:
+            audio_file.delete()
+            os.remove(temp_filename)
+        except:
+            pass
+            
         text = response.text.replace("```json", "").replace("```", "")
         return json.loads(text)
         
     except Exception as e:
-        return {"yuzluk_sistem_puani": 0, "transkript": "Analiz Hatası", "ogretmen_yorumu": f"Hata Detayı: {str(e)}"}
+        return {"yuzluk_sistem_puani": 0, "transkript": "Hata", "ogretmen_yorumu": f"Hata: {str(e)}"}
 
 # --- 6. ARAYÜZ ---
 st.set_page_config(page_title="Konuşma Sınavı", layout="wide", page_icon="🎓")
@@ -194,19 +212,20 @@ with col_center:
             if not ad_soyad:
                 st.error("Lütfen önce Ad Soyad giriniz!")
             else:
-                with st.spinner("Ses dosyası işleniyor ve puanlanıyor..."):
+                # İlerleme durumunu gösterecek özel kutu
+                with st.status("İşlem başlatılıyor...", expanded=True) as status:
                     try:
-                        # Ses dosyasını byte olarak al
                         audio_bytes = ses_kaydi.getvalue()
                         
-                        # Gemini'ye GÖNDER (Doğrudan Veri Yoluyla)
-                        sonuc = sesi_dogrudan_analiz_et(audio_bytes, secilen_konu, konular[secilen_konu])
+                        # Fonksiyona durum kutusunu da gönderiyoruz
+                        sonuc = sesi_dogrudan_analiz_et(audio_bytes, secilen_konu, konular[secilen_konu], status)
                         
                         transkript = sonuc.get("transkript", "Metin oluşturulamadı.")
                         puan = sonuc.get("yuzluk_sistem_puani", 0)
                         
-                        # Veritabanına kaydet
                         sonuc_kaydet(ad_soyad, sinif_no, secilen_konu, transkript, puan, sonuc)
+                        
+                        status.update(label="İşlem Tamamlandı!", state="complete", expanded=False)
                         st.balloons()
                         
                         # --- BÜYÜK PUAN KARTI ---
@@ -225,7 +244,6 @@ with col_center:
                         </div>
                         """, unsafe_allow_html=True)
                         
-                        # Detayları Göster
                         with st.expander("Sonuç Detayları", expanded=True):
                             st.info(f"**Öğretmen Görüşü:** {sonuc.get('ogretmen_yorumu')}")
                             st.text_area("Yapay Zeka Tarafından Çıkarılan Metin (Transkript)", transkript, height=150)
@@ -237,4 +255,5 @@ with col_center:
                             }))
                             
                     except Exception as e:
+                        status.update(label="Hata Oluştu", state="error")
                         st.error(f"Beklenmedik bir hata oluştu: {str(e)}")
