@@ -9,7 +9,7 @@ import time
 
 # --- 1. AYARLAR ---
 st.set_page_config(page_title="Konuşma Sınavı Sistemi", layout="wide", page_icon="🎓")
-ADMIN_SIFRESI = "1234"  # <-- YÖNETİCİ ŞİFRESİ BURADA
+ADMIN_SIFRESI = "1234"  # <-- YÖNETİCİ ŞİFRESİ
 
 # API Key Kontrolü
 try:
@@ -19,7 +19,7 @@ try:
 except Exception as e:
     pass
 
-# --- 2. VERİTABANI ---
+# --- 2. VERİTABANI VE DOSYA İŞLEMLERİ ---
 def init_db():
     conn = sqlite3.connect('okul_sinav.db')
     c = conn.cursor()
@@ -48,24 +48,21 @@ def sonuc_kaydet(ad, no, konu, metin, puan, detaylar, ses_path):
     conn.close()
 
 def tum_sonuclari_getir():
-    """Admin paneli için tüm detayları getirir"""
     conn = sqlite3.connect('okul_sinav.db')
     df = pd.read_sql_query("SELECT * FROM sonuclar ORDER BY id DESC", conn)
     conn.close()
     return df
 
-# --- 3. YARDIMCI FONKSİYONLAR ---
 def konulari_getir():
     dosya_yolu = "konusma_konulari.xlsx"
     if not os.path.exists(dosya_yolu):
         data = {
-            'Konu': ['Teknoloji', 'Spor'],
-            'Giriş': ['Tanım', 'Önem'],
-            'Gelişme': ['Faydalar', 'Türler'],
-            'Sonuç': ['Gelecek', 'Özet']
+            'Konu': ['Teknoloji Bağımlılığı', 'Doğa Sevgisi'],
+            'Giriş': ['Bağımlılık tanımı', 'Doğanın önemi'],
+            'Gelişme': ['Zararları', 'Faydaları'],
+            'Sonuç': ['Çözüm', 'Özet']
         }
         pd.DataFrame(data).to_excel(dosya_yolu, index=False)
-    
     try:
         df = pd.read_excel(dosya_yolu, engine='openpyxl')
         return {row['Konu']: {'Giriş': row['Giriş'], 'Gelişme': row['Gelişme'], 'Sonuç': row['Sonuç']} for i, row in df.iterrows()}
@@ -83,7 +80,7 @@ def sesi_kalici_kaydet(audio_bytes, ad_soyad):
 
 def sesi_analiz_et(audio_bytes, konu, detaylar, status_container):
     try:
-        model = genai.GenerativeModel('gemini-flash-latest')
+        model = genai.GenerativeModel('gemini-1.5-flash')
         status_container.update(label="Yapay Zeka Analiz Ediyor...", state="running")
         
         temp_file = "temp_ses.wav"
@@ -113,43 +110,42 @@ def sesi_analiz_et(audio_bytes, konu, detaylar, status_container):
     except Exception as e:
         return {"yuzluk_sistem_puani": 0, "transkript": "Hata", "ogretmen_yorumu": str(e)}
 
-# --- 4. ARAYÜZ ---
+# --- 3. ARAYÜZ ---
 init_db()
+if 'admin_logged_in' not in st.session_state: st.session_state['admin_logged_in'] = False
 
-# Session State (Giriş Durumu İçin)
-if 'admin_logged_in' not in st.session_state:
-    st.session_state['admin_logged_in'] = False
-
-# --- SOL PANEL (GİRİŞ VE MENÜ) ---
+# --- SOL MENÜ (ŞİFRELİ GİRİŞ) ---
 with st.sidebar:
-    st.title("🔐 Yönetici Girişi")
+    st.title("🔐 Yönetici Paneli")
     
     if not st.session_state['admin_logged_in']:
-        sifre = st.text_input("Admin Şifresi", type="password")
+        sifre = st.text_input("Şifre:", type="password")
         if st.button("Giriş Yap"):
             if sifre == ADMIN_SIFRESI:
                 st.session_state['admin_logged_in'] = True
-                st.success("Giriş Başarılı!")
                 st.rerun()
             else:
-                st.error("Hatalı Şifre")
+                st.error("Hatalı Şifre!")
     else:
-        st.success("Yönetici Modu Aktif")
-        secim = st.radio("Mod Seçiniz:", ["📝 Sınav Ekranı", "📂 Sonuç Arşivi (Admin)"])
+        st.success("Admin Girişi Yapıldı")
+        secim = st.radio("Sayfa Seçiniz:", ["📝 Sınav Ekranı", "📂 Sonuç Arşivi"])
         if st.button("Çıkış Yap"):
             st.session_state['admin_logged_in'] = False
             st.rerun()
 
-# --- ANA EKRAN KONTROLÜ ---
-# Eğer giriş yapılmadıysa veya "Sınav Ekranı" seçiliyse standart ekranı göster
+# --- MOD SEÇİMİNE GÖRE EKRAN ---
+
+# MOD 1: SINAV EKRANI (İstediğiniz Özel Tasarım)
 if not st.session_state['admin_logged_in'] or (st.session_state['admin_logged_in'] and secim == "📝 Sınav Ekranı"):
     
-    # --- STANDART SINAV EKRANI ---
+    # [1, 2, 1] Layout ile ortalama
     col_left, col_center, col_right = st.columns([1, 2, 1])
+    
     with col_center:
         st.title("🎤 Dijital Konuşma Sınavı")
         st.markdown("---")
         
+        # Form
         c1, c2 = st.columns(2)
         with c1: ad = st.text_input("Öğrenci Adı Soyadı")
         with c2: no = st.text_input("Sınıf / Numara")
@@ -157,20 +153,42 @@ if not st.session_state['admin_logged_in'] or (st.session_state['admin_logged_in
         konular = konulari_getir()
         secilen_konu = st.selectbox("Konu Seçiniz:", list(konular.keys()), index=None)
         
+        # PLAN KUTUCUKLARI (RENKLİ VE YAN YANA)
         if secilen_konu:
             detay = konular[secilen_konu]
-            k1,k2,k3 = st.columns(3)
-            k1.info(f"**Giriş:**\n{detay['Giriş']}")
-            k2.warning(f"**Gelişme:**\n{detay['Gelişme']}")
-            k3.success(f"**Sonuç:**\n{detay['Sonuç']}")
+            st.markdown(f"### 📋 {secilen_konu} - Konuşma Planı")
+            k1, k2, k3 = st.columns(3)
+            with k1: st.info(f"**1. GİRİŞ**\n\n{detay['Giriş']}")
+            with k2: st.warning(f"**2. GELİŞME**\n\n{detay['Gelişme']}")
+            with k3: st.success(f"**3. SONUÇ**\n\n{detay['Sonuç']}")
 
         st.markdown("<br>", unsafe_allow_html=True)
-        ses = st.audio_input("Kayda Başla")
+
+        # SABİT PUANLAMA TABLOSU (HTML)
+        rubric_html = """
+        <style>
+            .rubric-table {width: 100%; border-collapse: collapse; font-size: 0.9em; margin-bottom: 20px;}
+            .rubric-table th {background-color: #f8f9fa; border: 1px solid #dee2e6; padding: 8px; text-align: left;}
+            .rubric-table td {border: 1px solid #dee2e6; padding: 8px;}
+        </style>
+        <h4>⚖️ Puanlama Kriterleri</h4>
+        <table class="rubric-table">
+            <tr><th>Kriter</th><th>Açıklama</th><th>Puan (1-3)</th></tr>
+            <tr><td><b>İçerik</b></td><td>Konuya hakimiyet ve plana uyum</td><td>1 - 3</td></tr>
+            <tr><td><b>Düzen</b></td><td>Giriş, gelişme ve sonuç bütünlüğü</td><td>1 - 3</td></tr>
+            <tr><td><b>Dil</b></td><td>Kelime zenginliği ve gramer</td><td>1 - 3</td></tr>
+            <tr><td><b>Akıcılık</b></td><td>Telaffuz ve tonlama</td><td>1 - 3</td></tr>
+        </table>
+        """
+        st.markdown(rubric_html, unsafe_allow_html=True)
         
-        if ses and secilen_konu and st.button("Sınavı Bitir", type="primary"):
+        st.markdown("### 🎙️ Kaydı Başlat")
+        ses = st.audio_input("Mikrofona Tıklayın")
+        
+        if ses and secilen_konu and st.button("Bitir ve Puanla", type="primary", use_container_width=True):
             if not ad: st.warning("İsim giriniz.")
             else:
-                with st.status("İşleniyor...") as status:
+                with st.status("Değerlendiriliyor...", expanded=True) as status:
                     ses_data = ses.getvalue()
                     yol = sesi_kalici_kaydet(ses_data, ad)
                     sonuc = sesi_analiz_et(ses_data, secilen_konu, konular[secilen_konu], status)
@@ -178,23 +196,30 @@ if not st.session_state['admin_logged_in'] or (st.session_state['admin_logged_in
                     status.update(label="Tamamlandı", state="complete")
                     st.balloons()
                     
-                    st.success(f"PUAN: {sonuc.get('yuzluk_sistem_puani')}")
-                    with st.expander("Detaylar", expanded=True):
-                        st.write(sonuc.get("ogretmen_yorumu"))
+                    # BÜYÜK PUAN KARTI
+                    st.markdown(f"""
+                    <div style="background-color: #dcfce7; border: 2px solid #22c55e; border-radius: 12px; padding: 15px; text-align: center; margin-bottom: 20px;">
+                        <h2 style="margin:0; color:#166534;">PUAN: {sonuc.get('yuzluk_sistem_puani')}</h2>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    with st.container(border=True):
+                        st.info(f"**Yorum:** {sonuc.get('ogretmen_yorumu')}")
+                        st.text_area("Metin", sonuc.get("transkript"), height=150)
+                        kp = sonuc.get("kriter_puanlari", {})
+                        st.table(pd.DataFrame({
+                            "Kriter": ["İçerik", "Düzen", "Dil", "Akıcılık"],
+                            "Puan": [kp.get("konu_icerik"), kp.get("duzen"), kp.get("dil"), kp.get("akicilik")]
+                        }).set_index("Kriter"))
                         st.audio(yol)
 
-# --- ADMİN PANELİ EKRANI ---
-elif st.session_state['admin_logged_in'] and secim == "📂 Sonuç Arşivi (Admin)":
-    st.title("📂 Yönetici Paneli - Tüm Sonuçlar")
-    st.markdown("Öğrenci seçerek detayları, metni ve ses kaydını inceleyebilirsiniz.")
-    
+# MOD 2: ADMİN ARŞİV EKRANI (Detaylı Görünüm)
+elif st.session_state['admin_logged_in'] and secim == "📂 Sonuç Arşivi":
+    st.title("📂 Arşiv ve Detaylar")
     df = tum_sonuclari_getir()
     
     if not df.empty:
-        # Tablo Görünümü
-        st.markdown("### 📋 Öğrenci Listesi")
-        
-        # Seçim yapılabilen interaktif tablo
+        # İNTERAKTİF TABLO
         event = st.dataframe(
             df[["id", "ad_soyad", "sinif_no", "konu", "puan_100luk", "tarih"]],
             selection_mode="single-row",
@@ -203,57 +228,32 @@ elif st.session_state['admin_logged_in'] and secim == "📂 Sonuç Arşivi (Admi
             hide_index=True
         )
         
-        # Eğer bir satır seçildiyse detayları göster
         if len(event.selection.rows) > 0:
-            secilen_index = event.selection.rows[0]
-            secilen_kayit = df.iloc[secilen_index]
-            
+            secilen = df.iloc[event.selection.rows[0]]
             st.divider()
-            st.subheader(f"🔍 İnceleme: {secilen_kayit['ad_soyad']}")
             
-            col_admin_1, col_admin_2 = st.columns([1, 1])
+            # 2 SÜTUNLU DETAY
+            col_a, col_b = st.columns([1, 1])
             
-            # SOL KOLON: Metin ve Ses
-            with col_admin_1:
-                st.markdown("#### 🗣️ Konuşma Kaydı")
-                if os.path.exists(secilen_kayit['ses_yolu']):
-                    st.audio(secilen_kayit['ses_yolu'])
+            with col_a:
+                st.subheader(f"👤 {secilen['ad_soyad']}")
+                if os.path.exists(secilen['ses_yolu']):
+                    st.audio(secilen['ses_yolu'])
                 else:
-                    st.error(f"Ses dosyası bulunamadı: {secilen_kayit['ses_yolu']}")
+                    st.error("Ses dosyası silinmiş.")
+                st.text_area("Transkript", secilen['konusma_metni'], height=300, disabled=True)
                 
-                st.markdown("#### 📝 Transkript (Metin)")
-                st.text_area("", secilen_kayit['konusma_metni'], height=300, disabled=True)
-            
-            # SAĞ KOLON: Puan Detayları ve Yorum
-            with col_admin_2:
-                st.markdown("#### 📊 Puan Detayları")
-                
-                # JSON verisini parse etme
+            with col_b:
+                st.markdown(f"# Puan: {secilen['puan_100luk']}")
                 try:
-                    detay_json = json.loads(secilen_kayit['detaylar'])
-                    puanlar = detay_json.get("kriter_puanlari", {})
-                    yorum = detay_json.get("ogretmen_yorumu", "")
-                    
-                    # Büyük Puan Göstergesi
-                    st.markdown(f"""
-                    <div style="background-color:#dcfce7; padding:10px; border-radius:10px; text-align:center; border:2px solid #22c55e;">
-                        <h1 style="color:#15803d; margin:0;">{secilen_kayit['puan_100luk']}</h1>
-                        <small>Toplam Puan</small>
-                    </div>
-                    <br>
-                    """, unsafe_allow_html=True)
-                    
-                    # Kriter Tablosu
-                    df_puan = pd.DataFrame({
+                    detay = json.loads(secilen['detaylar'])
+                    st.info(detay.get("ogretmen_yorumu"))
+                    kp = detay.get("kriter_puanlari", {})
+                    st.table(pd.DataFrame({
                         "Kriter": ["İçerik", "Düzen", "Dil", "Akıcılık"],
-                        "Puan": [puanlar.get("konu_icerik"), puanlar.get("duzen"), puanlar.get("dil"), puanlar.get("akicilik")]
-                    })
-                    st.table(df_puan.set_index("Kriter"))
-                    
-                    st.info(f"**Öğretmen Yorumu:**\n{yorum}")
-                    
-                except Exception as e:
-                    st.error(f"Detay verisi bozuk: {e}")
-                    
+                        "Puan": [kp.get("konu_icerik"), kp.get("duzen"), kp.get("dil"), kp.get("akicilik")]
+                    }).set_index("Kriter"))
+                except:
+                    st.error("Detay verisi okunamadı.")
     else:
-        st.info("Henüz veritabanında kayıtlı sınav sonucu yok.")
+        st.info("Kayıt yok.")
