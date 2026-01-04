@@ -8,7 +8,7 @@ import google.generativeai as genai
 import time
 
 # --- 2. AYARLAR ---
-# Şifreyi Streamlit Secrets'tan alıyoruz
+# Genel konfigürasyon (Sayfa açılışında)
 try:
     if "GOOGLE_API_KEY" in st.secrets:
         GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
@@ -66,20 +66,27 @@ def konulari_getir():
     except Exception:
         return {}
 
-# --- 5. SES ANALİZİ (YENİ VE GÜÇLÜ YÖNTEM) ---
+# --- 5. SES ANALİZİ (DÜZELTİLDİ) ---
 def sesi_dogrudan_analiz_et(audio_bytes, konu, detaylar):
     try:
+        # DÜZELTME BURADA YAPILDI:
+        # Dosya yüklemeden hemen önce şifreyi garanti altına alıyoruz.
+        if "GOOGLE_API_KEY" in st.secrets:
+            genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+        
+        # Model ismi
         model = genai.GenerativeModel('gemini-flash-latest')
         
-        # 1. Sesi geçici bir dosya olarak kaydet (Gemini'ye yüklemek için)
+        # 1. Sesi geçici bir dosya olarak kaydet
         temp_filename = "ogrenci_sesi.wav"
         with open(temp_filename, "wb") as f:
             f.write(audio_bytes)
         
         # 2. Dosyayı Gemini sunucularına yükle
+        # (Artık şifreyi kesin biliyor, hata vermeyecek)
         audio_file = genai.upload_file(temp_filename)
         
-        # Dosyanın işlenmesini bekle (Genelde 1-2 saniye)
+        # Dosyanın işlenmesini bekle
         while audio_file.state.name == "PROCESSING":
             time.sleep(1)
             audio_file = genai.get_file(audio_file.name)
@@ -104,7 +111,7 @@ def sesi_dogrudan_analiz_et(audio_bytes, konu, detaylar):
         1. Konu ve İçerik (Konuya hakim mi?)
         2. Düzen (Giriş-Gelişme-Sonuç var mı?)
         3. Dili Kullanma (Kelime dağarcığı)
-        4. Akıcılık (Duraksamalar, "ııı"lamalar, tonlama)
+        4. Akıcılık (Duraksamalar, "ııı"lamalar, tonlama, vurgu)
         
         SADECE JSON FORMATINDA CEVAP VER:
         {{
@@ -112,7 +119,7 @@ def sesi_dogrudan_analiz_et(audio_bytes, konu, detaylar):
             "kriter_puanlari": {{ "konu_icerik": 2, "duzen": 2, "dil": 2, "akicilik": 2 }},
             "toplam_ham_puan": 8,
             "yuzluk_sistem_puani": 66,
-            "ogretmen_yorumu": "Buraya yorumunu yaz (Örn: Sesi çok titrek, daha özgüvenli olmalı...)"
+            "ogretmen_yorumu": "Buraya yorumunu yaz."
         }}
         """
         
@@ -130,7 +137,7 @@ def sesi_dogrudan_analiz_et(audio_bytes, konu, detaylar):
         return json.loads(text)
         
     except Exception as e:
-        return {"yuzluk_sistem_puani": 0, "transkript": "Hata oluştu.", "ogretmen_yorumu": f"Sistem Hatası: {str(e)}"}
+        return {"yuzluk_sistem_puani": 0, "transkript": "Analiz Hatası", "ogretmen_yorumu": f"Hata Detayı: {str(e)}"}
 
 # --- 6. ARAYÜZ ---
 st.set_page_config(page_title="Konuşma Sınavı", layout="wide", page_icon="🎓")
