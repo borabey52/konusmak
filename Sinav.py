@@ -8,12 +8,15 @@ import speech_recognition as sr
 import google.generativeai as genai
 
 # --- 2. AYARLAR ---
-# Şifreyi koddan değil, Streamlit Secrets'tan alıyoruz
+# Şifreyi kodun içine YAZMIYORUZ. Streamlit Secrets'tan çekiyoruz.
 try:
-    GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
-    genai.configure(api_key=GOOGLE_API_KEY)
-except Exception:
-    st.error("API Key bulunamadı! Lütfen Streamlit Secrets ayarlarını yapınız.")
+    if "GOOGLE_API_KEY" in st.secrets:
+        GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
+        genai.configure(api_key=GOOGLE_API_KEY)
+    else:
+        st.error("Secrets ayarı bulunamadı. Lütfen Streamlit panelinden API Key ekleyin.")
+except Exception as e:
+    st.error(f"API Key hatası: {e}")
 
 # --- 3. VERİTABANI ---
 def init_db():
