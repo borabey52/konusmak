@@ -7,13 +7,11 @@ from datetime import datetime
 import google.generativeai as genai
 import time
 
-# --- 2. AYARLAR (KESİN ÇÖZÜM) ---
+# --- 2. AYARLAR ---
 try:
     if "GOOGLE_API_KEY" in st.secrets:
+        # Şifreyi al ve yapılandır
         api_key = st.secrets["GOOGLE_API_KEY"]
-        # 1. Şifreyi İşletim Sistemine Tanıt (File API hatasını çözer)
-        os.environ["GOOGLE_API_KEY"] = api_key
-        # 2. Kütüphaneyi Yapılandır
         genai.configure(api_key=api_key)
     else:
         st.error("Lütfen Streamlit panelinden API Key ekleyin.")
@@ -68,30 +66,14 @@ def konulari_getir():
     except Exception:
         return {}
 
-# --- 5. SES ANALİZİ ---
+# --- 5. SES ANALİZİ (INLINE DATA YÖNTEMİ - HATA VERMEZ) ---
 def sesi_dogrudan_analiz_et(audio_bytes, konu, detaylar):
     try:
-        # Model ismi
         model = genai.GenerativeModel('gemini-flash-latest')
         
-        # 1. Sesi geçici bir dosya olarak kaydet
-        temp_filename = "ogrenci_sesi.wav"
-        with open(temp_filename, "wb") as f:
-            f.write(audio_bytes)
-        
-        # 2. Dosyayı Gemini sunucularına yükle
-        # (os.environ ayarı sayesinde artık hata vermez)
-        audio_file = genai.upload_file(temp_filename)
-        
-        # Dosyanın işlenmesini bekle
-        while audio_file.state.name == "PROCESSING":
-            time.sleep(1)
-            audio_file = genai.get_file(audio_file.name)
-            
-        # 3. Prompt Hazırla
+        # PROMPT HAZIRLIĞI
         prompt = f"""
-        Sen bir Türkçe öğretmenisin. Sana bir öğrencinin konuşma sınavı ses kaydını gönderiyorum.
-        Lütfen bu sesi DİNLE ve değerlendir.
+        Sen bir Türkçe öğretmenisin. Sana gönderdiğim ses dosyasını DİNLE ve değerlendir.
         
         SINAV KONUSU: {konu}
         BEKLENEN PLAN:
@@ -120,16 +102,16 @@ def sesi_dogrudan_analiz_et(audio_bytes, konu, detaylar):
         }}
         """
         
-        # 4. Sesi ve Prompt'u beraber gönder
-        response = model.generate_content([audio_file, prompt])
+        # --- KRİTİK DEĞİŞİKLİK ---
+        # Dosya yüklemek (upload_file) yerine, veriyi doğrudan paketin içine koyuyoruz.
+        # Bu yöntem File API kullanmaz, bu yüzden o hatayı vermesi imkansızdır.
+        ses_verisi = {
+            "mime_type": "audio/wav",
+            "data": audio_bytes
+        }
         
-        # 5. Temizlik (Dosyayı sil)
-        try:
-            audio_file.delete()
-            os.remove(temp_filename)
-        except:
-            pass
-            
+        response = model.generate_content([prompt, ses_verisi])
+        
         text = response.text.replace("```json", "").replace("```", "")
         return json.loads(text)
         
@@ -212,12 +194,12 @@ with col_center:
             if not ad_soyad:
                 st.error("Lütfen önce Ad Soyad giriniz!")
             else:
-                with st.spinner("Ses dosyası Gemini'ye yükleniyor, dinleniyor ve puanlanıyor..."):
+                with st.spinner("Ses dosyası işleniyor ve puanlanıyor..."):
                     try:
                         # Ses dosyasını byte olarak al
                         audio_bytes = ses_kaydi.getvalue()
                         
-                        # Gemini'ye gönder (Ses + Prompt)
+                        # Gemini'ye GÖNDER (Doğrudan Veri Yoluyla)
                         sonuc = sesi_dogrudan_analiz_et(audio_bytes, secilen_konu, konular[secilen_konu])
                         
                         transkript = sonuc.get("transkript", "Metin oluşturulamadı.")
