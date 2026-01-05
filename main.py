@@ -48,40 +48,39 @@ def get_gcp_creds():
     return creds
 
 # Sesi Google Drive'a Yükleyen Fonksiyon
+# --- main.py içindeki bu fonksiyonu tamamen değiştirin ---
+
 def upload_audio_to_drive(audio_bytes, dosya_adi):
     creds = get_gcp_creds()
     service = build('drive', 'v3', credentials=creds)
     
-    # 'Ses_Kayitlari' klasörünü bul veya oluştur
-    folder_id = "1XhYjXeVdKAOrGJlOr3z_-vE4wZwEY7df"
-    results = service.files().list(q="name='Ses_Kayitlari' and mimeType='application/vnd.google-apps.folder'", fields="files(id)").execute()
-    items = results.get('files', [])
-    
-    if not items:
-        file_metadata = {'name': 'Ses_Kayitlari', 'mimeType': 'application/vnd.google-apps.folder'}
-        folder = service.files().create(body=file_metadata, fields='id').execute()
-        folder_id = folder.get('id')
-    else:
-        folder_id = items[0]['id']
+    # 👇 BURAYI DEĞİŞTİRİN: Linkten aldığınız o karışık kodu tırnak içine yapıştırın
+    klasor_id = "BURAYA_KLASOR_LINKINDEKI_ID_YI_YAPISTIRIN" 
 
-    # Dosyayı Yükle
-    file_metadata = {'name': dosya_adi, 'parents': [folder_id]}
+    # Dosya Bilgileri
+    file_metadata = {
+        'name': dosya_adi, 
+        'parents': [klasor_id]  # Dosyayı direkt bu ID'li klasöre atar
+    }
+    
     media = MediaIoBaseUpload(io.BytesIO(audio_bytes), mimetype='audio/wav')
-    file = service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
-    
-    return file.get('webViewLink')
-
-# Sonucu Google Sheets'e Kaydeden Fonksiyon
-def save_to_sheet(data_list):
-    creds = get_gcp_creds()
-    client = gspread.authorize(creds)
     
     try:
-        # Drive'da 'Sinav_Sonuclari' adında bir Sheet olmalı
-        sheet = client.open("Sinav_Sonuclari").sheet1
-    except:
-        st.error("Google Drive'da 'Sinav_Sonuclari' adında bir dosya bulunamadı. Lütfen oluşturup paylaşın.")
-        return
+        file = service.files().create(
+            body=file_metadata, 
+            media_body=media, 
+            fields='id, webViewLink'
+        ).execute()
+        
+        return file.get('webViewLink')
+        
+    except Exception as e:
+        # Hata olursa ekranda sebebini görelim
+        st.error(f"Drive Yükleme Hatası: {str(e)}")
+        # Eğer yetki hatasıysa kullanıcıyı uyaralım
+        if "bD" in str(e) or "404" in str(e) or "403" in str(e):
+             st.warning("İPUCU: Klasörü 'client_email' adresiyle 'Editör' olarak paylaştığınızdan emin olun.")
+        return "Hata"
 
     # Başlık yoksa ekle
     if not sheet.row_values(1):
