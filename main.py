@@ -53,7 +53,7 @@ def upload_audio_to_drive(audio_bytes, dosya_adi):
     service = build('drive', 'v3', credentials=creds)
     
     # 'Ses_Kayitlari' klasörünü bul veya oluştur
-    folder_id = None
+    folder_id = "1XhYjXeVdKAOrGJlOr3z_-vE4wZwEY7df"
     results = service.files().list(q="name='Ses_Kayitlari' and mimeType='application/vnd.google-apps.folder'", fields="files(id)").execute()
     items = results.get('files', [])
     
