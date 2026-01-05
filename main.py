@@ -7,10 +7,8 @@ import google.generativeai as genai
 import time
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
 import io
-import openpyxl # Excel okuma için gerekli
+import openpyxl 
 
 # --- 1. AYARLAR ---
 st.set_page_config(page_title="Konuşma Sınavı Sistemi", layout="wide", page_icon="🎓")
@@ -24,46 +22,20 @@ try:
 except Exception as e:
     st.error("API Key bulunamadı.")
 
-# --- 2. GOOGLE BAĞLANTILARI ---
+# --- 2. GOOGLE SHEETS BAĞLANTISI (Sadece Tablo) ---
 
 @st.cache_resource
 def get_gcp_creds():
-    scope = [
-        'https://spreadsheets.google.com/feeds',
-        'https://www.googleapis.com/auth/drive'
-    ]
+    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     info = dict(st.secrets["gcp_service_account"])
     info["private_key"] = info["private_key"].replace("\\n", "\n")
     creds = ServiceAccountCredentials.from_json_keyfile_dict(info, scope)
     return creds
 
-def upload_audio_to_drive(audio_bytes, dosya_adi):
-    """
-    Ses dosyasını Google Drive'a yükler.
-    Hata verirse (Kota/Yetki) programı durdurmaz, sadece hata mesajı döndürür.
-    """
-    try:
-        creds = get_gcp_creds()
-        service = build('drive', 'v3', credentials=creds)
-        
-        file_metadata = {'name': dosya_adi}
-        media = MediaIoBaseUpload(io.BytesIO(audio_bytes), mimetype='audio/wav')
-        
-        file = service.files().create(
-            body=file_metadata, 
-            media_body=media, 
-            fields='id, webViewLink'
-        ).execute()
-        
-        return file.get('webViewLink')
-        
-    except Exception as e:
-        print(f"Drive Upload Hatası: {e}")
-        return "Yüklenemedi (Kota/Yetki Sorunu)"
-
 def save_to_sheet(data_list):
     """
     Sonuçları Google Sheets'e kaydeder.
+    Ses dosyası yükleme olmadığı için çok hızlı ve hatasız çalışır.
     """
     try:
         creds = get_gcp_creds()
@@ -75,8 +47,9 @@ def save_to_sheet(data_list):
             st.error("HATA: Google Drive'da 'Sinav_Sonuclari' adında bir tablo bulunamadı.")
             return
 
+        # Başlıkları Güncelledik: "Ses Linki" yerine "Puan Detayları" geldi
         if not sheet.row_values(1):
-            sheet.append_row(["Tarih", "Ad Soyad", "Sınıf", "Okul No", "Konu", "Puan", "Ses Linki", "Transkript", "Yorum"])
+            sheet.append_row(["Tarih", "Ad Soyad", "Sınıf", "Okul No", "Konu", "Puan", "Puan Detayları", "Transkript", "Öğretmen Yorumu"])
             
         sheet.append_row(data_list)
         
@@ -96,11 +69,9 @@ def get_all_results():
     except:
         return pd.DataFrame()
 
-# --- 3. YARDIMCI FONKSİYONLAR (EXCEL BAĞLANTISI AKTİF) ---
+# --- 3. YARDIMCI FONKSİYONLAR ---
 def konulari_getir():
     dosya_yolu = "konusma_konulari.xlsx"
-    
-    # Dosya yoksa oluştur
     if not os.path.exists(dosya_yolu):
         data = {
             'Konu': ['Teknoloji Bağımlılığı', 'Doğa Sevgisi'],
@@ -108,33 +79,24 @@ def konulari_getir():
             'Gelişme': ['Zararları', 'Faydaları'],
             'Sonuç': ['Çözüm', 'Özet']
         }
-        try:
-            pd.DataFrame(data).to_excel(dosya_yolu, index=False)
-        except:
-            pass
+        try: pd.DataFrame(data).to_excel(dosya_yolu, index=False)
+        except: pass
 
-    # Excel'den oku
     try:
         df = pd.read_excel(dosya_yolu, engine='openpyxl')
         konular_sozlugu = {}
         for index, row in df.iterrows():
             konular_sozlugu[row['Konu']] = {
-                'Giriş': row['Giriş'],
-                'Gelişme': row['Gelişme'],
-                'Sonuç': row['Sonuç']
+                'Giriş': row['Giriş'], 'Gelişme': row['Gelişme'], 'Sonuç': row['Sonuç']
             }
         return konular_sozlugu
-    except Exception as e:
-        # Okuma hatası olursa yedek veri dön
-        return {
-            'Teknoloji Bağımlılığı (Yedek)': {'Giriş': 'Tanım', 'Gelişme': 'Zararlar', 'Sonuç': 'Çözüm'},
-            'Doğa Sevgisi (Yedek)': {'Giriş': 'Önem', 'Gelişme': 'Koruma', 'Sonuç': 'Gelecek'}
-        }
+    except:
+        return {'Teknoloji Bağımlılığı (Yedek)': {'Giriş': 'Tanım', 'Gelişme': 'Zararlar', 'Sonuç': 'Çözüm'}}
 
 def sesi_analiz_et(audio_bytes, konu, detaylar, status_container):
     try:
         model = genai.GenerativeModel('gemini-flash-latest')
-        status_container.update(label="Sinan Hoca Analiz Ediyor ve Puanlıyor. Bekleyiniz...", state="running")
+        status_container.update(label="Sinan Hoca Analiz Ediyor... 🤖", state="running")
         
         import tempfile
         tfile = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
@@ -147,9 +109,8 @@ def sesi_analiz_et(audio_bytes, konu, detaylar, status_container):
             audio_file = genai.get_file(audio_file.name)
             
         prompt = f"""
-        Rol: Sen uzman bir Türkçe Öğretmenisin. Öğrencinin yaptığı konuşmayı kriterlere göre değerlendir.
-        Konu: {konu}. Plan Beklentisi: {detaylar}.
-        
+        Rol: Türkçe Öğretmeni.
+        Konu: {konu}. Plan: {detaylar}.
         Görev:
         1. Transkript çıkar.
         2. Kriterleri (İçerik, Düzen, Dil, Akıcılık) 1-3 puanla.
@@ -166,16 +127,13 @@ def sesi_analiz_et(audio_bytes, konu, detaylar, status_container):
         end = text.rfind('}') + 1
         return json.loads(text[start:end])
     except Exception as e:
-        return {"yuzluk_sistem_puani": 0, "transkript": "Hata oluştu", "ogretmen_yorumu": str(e)}
+        return {"yuzluk_sistem_puani": 0, "transkript": "Hata", "ogretmen_yorumu": str(e)}
 
 # --- 4. ARAYÜZ ---
-
 if 'admin_logged_in' not in st.session_state: st.session_state['admin_logged_in'] = False
 
-# --- SOL MENÜ ---
 with st.sidebar:
     st.title("🔐 Yönetici Paneli")
-    
     if not st.session_state['admin_logged_in']:
         sifre = st.text_input("Şifre:", type="password")
         if st.button("Giriş Yap"):
@@ -192,7 +150,6 @@ with st.sidebar:
             st.rerun()
 
 # --- MOD SEÇİMİ ---
-
 if not st.session_state['admin_logged_in'] or (st.session_state['admin_logged_in'] and secim == "📝 Sınav Ekranı"):
     
     col_left, col_center, col_right = st.columns([1, 2, 1])
@@ -202,25 +159,22 @@ if not st.session_state['admin_logged_in'] or (st.session_state['admin_logged_in
         st.markdown("---")
         
         c1, c2, c3 = st.columns([3, 1.5, 1.5])
-        
-        with c1: 
-            ad = st.text_input("Öğrenci Adı Soyadı")
+        with c1: ad = st.text_input("Öğrenci Adı Soyadı")
         with c2: 
             sinif_listesi = ["5/C", "5/D", "5/E", "6/D", "8/D", "Diğer"]
             sinif = st.selectbox("Sınıf / Şube", sinif_listesi, index=None)
-        with c3: 
-            numara = st.text_input("Okul No")
+        with c3: numara = st.text_input("Okul No")
         
         konular = konulari_getir()
         secilen_konu = st.selectbox("Konu Seçiniz:", list(konular.keys()), index=None)
         
         if secilen_konu:
-            detay = konular[secilen_konu]
+            detay = konular.get(secilen_konu, {})
             st.markdown(f"### 📋 {secilen_konu} - Konuşma Planı")
             k1, k2, k3 = st.columns(3)
-            with k1: st.info(f"**1. GİRİŞ**\n\n{detay['Giriş']}")
-            with k2: st.warning(f"**2. GELİŞME**\n\n{detay['Gelişme']}")
-            with k3: st.success(f"**3. SONUÇ**\n\n{detay['Sonuç']}")
+            with k1: st.info(f"**1. GİRİŞ**\n\n{detay.get('Giriş','')}")
+            with k2: st.warning(f"**2. GELİŞME**\n\n{detay.get('Gelişme','')}")
+            with k3: st.success(f"**3. SONUÇ**\n\n{detay.get('Sonuç','')}")
 
         st.markdown("<br>", unsafe_allow_html=True)
 
@@ -252,17 +206,21 @@ if not st.session_state['admin_logged_in'] or (st.session_state['admin_logged_in
                 with st.status("İşlemler Yapılıyor...", expanded=True) as status:
                     ses_data = ses.getvalue()
                     
-                    sonuc = sesi_analiz_et(ses_data, secilen_konu, konular[secilen_konu], status)
+                    # 1. Analiz
+                    sonuc = sesi_analiz_et(ses_data, secilen_konu, konular.get(secilen_konu,{}), status)
                     
-                    status.write("☁️ Ses dosyası işleniyor...")
-                    drive_link = upload_audio_to_drive(ses_data, f"{ad}_{sinif}_{numara}_{datetime.now().strftime('%Y%m%d')}.wav")
+                    # 2. DETAYLARI HAZIRLA (Ses linki yerine bu gidecek)
+                    kp = sonuc.get("kriter_puanlari", {})
+                    # Örn: "İçerik: 3 | Düzen: 2 | Dil: 3 | Akıcılık: 2"
+                    detay_metni = f"İçerik: {kp.get('konu_icerik')} | Düzen: {kp.get('duzen')} | Dil: {kp.get('dil')} | Akıcılık: {kp.get('akicilik')}"
                     
-                    status.write("📝 Sonuçlar veritabanına işleniyor...")
+                    # 3. KAYIT (HIZLI VE HATASIZ)
+                    status.write("📝 Sonuçlar kaydediliyor...")
                     save_to_sheet([
                         datetime.now().strftime("%Y-%m-%d %H:%M"),
                         ad, sinif, numara, secilen_konu,
                         sonuc.get("yuzluk_sistem_puani"),
-                        drive_link,
+                        detay_metni, # ARTIK LİNK DEĞİL DETAY GİDİYOR
                         sonuc.get("transkript"),
                         sonuc.get("ogretmen_yorumu")
                     ])
@@ -270,6 +228,7 @@ if not st.session_state['admin_logged_in'] or (st.session_state['admin_logged_in
                     status.update(label="Tamamlandı", state="complete")
                     st.balloons()
                     
+                    # SONUÇ GÖSTERİMİ
                     st.markdown(f"""
                     <div style="background-color: #dcfce7; border: 2px solid #22c55e; border-radius: 12px; padding: 15px; text-align: center; margin-bottom: 20px;">
                         <h2 style="margin:0; color:#166534;">PUAN: {sonuc.get('yuzluk_sistem_puani')}</h2>
@@ -280,14 +239,13 @@ if not st.session_state['admin_logged_in'] or (st.session_state['admin_logged_in
                         st.info(f"**Yorum:** {sonuc.get('ogretmen_yorumu')}")
                         st.text_area("Metin", sonuc.get("transkript"), height=150)
                         
-                        kp = sonuc.get("kriter_puanlari", {})
                         st.table(pd.DataFrame({
                             "Kriter": ["İçerik", "Düzen", "Dil", "Akıcılık"],
                             "Puan": [kp.get("konu_icerik"), kp.get("duzen"), kp.get("dil"), kp.get("akicilik")]
                         }).set_index("Kriter"))
 
 elif st.session_state['admin_logged_in'] and secim == "📂 Sonuç Arşivi":
-    st.title("📂 Arşiv ve Detaylar (Google Sheets)")
+    st.title("📂 Arşiv ve Detaylar")
     df = get_all_results()
     
     if not df.empty:
@@ -298,7 +256,6 @@ elif st.session_state['admin_logged_in'] and secim == "📂 Sonuç Arşivi":
             use_container_width=True,
             hide_index=True
         )
-        st.info("Veriler doğrudan Google Drive'dan çekilmektedir.")
     else:
         st.info("Henüz kayıt bulunmamaktadır.")
 
