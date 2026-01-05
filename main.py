@@ -257,3 +257,13 @@ elif st.session_state['admin_logged_in'] and secim == "📂 Sonuç Arşivi":
                     st.error("Detay verisi okunamadı.")
     else:
         st.info("Kayıt yok.")
+# --- 4. FOOTER (ALT BİLGİ) ---
+st.markdown("---") # Ayırıcı çizgi
+st.markdown(
+    """
+    <div style="text-align: center; color: #888; padding: 10px; font-size: 0.9em;">
+        © 2026 | Bu uygulama <b>Sinan Sayılır</b> tarafından geliştirilmiş ve kodlanmıştır.
+    </div>
+    """, 
+    unsafe_allow_html=True
+)
