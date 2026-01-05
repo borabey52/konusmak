@@ -55,7 +55,7 @@ def upload_audio_to_drive(audio_bytes, dosya_adi):
     service = build('drive', 'v3', credentials=creds)
     
     # 👇 BURAYI DEĞİŞTİRİN: Linkten aldığınız o karışık kodu tırnak içine yapıştırın
-    klasor_id = "BURAYA_KLASOR_LINKINDEKI_ID_YI_YAPISTIRIN" 
+    klasor_id = "1XhYjXeVdKAOrGJlOr3z_-vE4wZwEY7df" 
 
     # Dosya Bilgileri
     file_metadata = {
