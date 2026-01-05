@@ -92,7 +92,7 @@ def sesi_analiz_et(audio_bytes, konu, detaylar, status_container):
             audio_file = genai.get_file(audio_file.name)
             
         prompt = f"""
-        Rol: Türkçe Öğretmeni.
+        Rol: Sen uzaman bir Türkçe Öğretmenisin. Öğrencinin yaptığı konuşmayı kriterlere göre değerlendir. Değerlendirme sırasında öğrencinin plana uymuş olmasına dikkat et. 
         Konu: {konu}. Plan: {detaylar}.
         Görev:
         1. Transkript çıkar.
