@@ -234,7 +234,7 @@ if not st.session_state['admin_logged_in'] or (st.session_state['admin_logged_in
         st.markdown("### 🎙️ Kaydı Başlat")
         ses = st.audio_input("Mikrofona Tıklayın")
         
-        # KAYIT VE PUANLAMA (Bulut Entegrasyonlu)
+        # KAYIT VE PUANLAMA (Hata Korumalı Versiyon)
         if ses and secilen_konu and st.button("Bitir ve Puanla", type="primary", use_container_width=True):
             if not ad: st.warning("Lütfen isim giriniz.")
             elif not sinif: st.warning("Lütfen sınıf seçiniz.")
@@ -243,21 +243,30 @@ if not st.session_state['admin_logged_in'] or (st.session_state['admin_logged_in
                 with st.status("İşlemler Yapılıyor...", expanded=True) as status:
                     ses_data = ses.getvalue()
                     
-                    # 1. Analiz
+                    # 1. Analiz (Gemini)
+                    status.write("🧠 Yapay zeka analiz ediyor...")
                     sonuc = sesi_analiz_et(ses_data, secilen_konu, konular[secilen_konu], status)
                     
-                    # 2. Drive'a Yükleme
-                    status.write("☁️ Ses dosyası Google Drive'a yükleniyor...")
+                    # 2. Drive'a Yükleme (HATA KORUMASI EKLENDİ)
+                    status.write("☁️ Ses dosyası işleniyor...")
                     dosya_adi = f"{ad}_{sinif}_{numara}_{datetime.now().strftime('%Y%m%d')}.wav"
-                    drive_link = upload_audio_to_drive(ses_data, dosya_adi)
                     
-                    # 3. Sheets'e Kaydetme
+                    # -- DEĞİŞİKLİK BURADA: Hata olsa bile devam et --
+                    try:
+                        drive_link = upload_audio_to_drive(ses_data, dosya_adi)
+                        # Eğer hata mesajı döndüyse (fonksiyon içindeki try-except'ten)
+                        if "Hata" in drive_link:
+                            drive_link = "Yüklenemedi (Google Kota Sınırı)"
+                    except Exception:
+                        drive_link = "Yüklenemedi (Google Kota Sınırı)"
+                    
+                    # 3. Sheets'e Kaydetme (ARTIK ÇÖKMEZ)
                     status.write("📝 Sonuçlar veritabanına işleniyor...")
                     save_to_sheet([
                         datetime.now().strftime("%Y-%m-%d %H:%M"),
                         ad, sinif, numara, secilen_konu,
                         sonuc.get("yuzluk_sistem_puani"),
-                        drive_link,
+                        drive_link, # Link yerine hata mesajı yazar ama kaydeder
                         sonuc.get("transkript"),
                         sonuc.get("ogretmen_yorumu")
                     ])
