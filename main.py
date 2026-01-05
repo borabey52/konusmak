@@ -9,7 +9,7 @@ import time
 
 # --- 1. AYARLAR ---
 st.set_page_config(page_title="Konuşma Sınavı Sistemi", layout="wide", page_icon="🎓")
-ADMIN_SIFRESI = "1234"
+ADMIN_SIFRESI = "1234"  # <-- YÖNETİCİ ŞİFRESİ
 
 # API Key Kontrolü
 try:
@@ -19,7 +19,7 @@ try:
 except Exception as e:
     pass
 
-# --- 2. VERİTABANI ---
+# --- 2. VERİTABANI VE DOSYA İŞLEMLERİ ---
 def init_db():
     conn = sqlite3.connect('okul_sinav.db')
     c = conn.cursor()
@@ -82,20 +82,30 @@ def sesi_analiz_et(audio_bytes, konu, detaylar, status_container):
     try:
         model = genai.GenerativeModel('gemini-flash-latest')
         status_container.update(label="Yapay Zeka Analiz Ediyor...", state="running")
+        
         temp_file = "temp_ses.wav"
         with open(temp_file, "wb") as f: f.write(audio_bytes)
+        
         audio_file = genai.upload_file(temp_file)
         while audio_file.state.name == "PROCESSING":
             time.sleep(0.5)
             audio_file = genai.get_file(audio_file.name)
+            
         prompt = f"""
-        Rol: Türkçe Öğretmeni. Konu: {konu}. Plan: {detaylar}.
-        Görev: 1. Transkript çıkar. 2. Kriterleri (İçerik, Düzen, Dil, Akıcılık) 1-3 puanla. 3. Puan = (Toplam/12)*100.
-        JSON Çıktısı: {{ "transkript": "...", "kriter_puanlari": {{"konu_icerik":0,"duzen":0,"dil":0,"akicilik":0}}, "yuzluk_sistem_puani":0, "ogretmen_yorumu":"..." }}
+        Rol: Sen uzaman bir Türkçe Öğretmenisin. Öğrencinin yaptığı konuşmayı kriterlere göre değerlendir. Değerlendirme sırasında öğrencinin plana uymuş olmasına dikkat et. 
+        Konu: {konu}. Plan: {detaylar}.
+        Görev:
+        1. Transkript çıkar.
+        2. Kriterleri (İçerik, Düzen, Dil, Akıcılık) 1-3 puanla.
+        3. Puan = (Toplam/12)*100.
+        
+        JSON Çıktısı:
+        {{ "transkript": "...", "kriter_puanlari": {{"konu_icerik":0,"duzen":0,"dil":0,"akicilik":0}}, "yuzluk_sistem_puani":0, "ogretmen_yorumu":"..." }}
         """
         response = model.generate_content([audio_file, prompt])
         try: os.remove(temp_file) 
         except: pass
+        
         return json.loads(response.text.replace("```json","").replace("```","").strip())
     except Exception as e:
         return {"yuzluk_sistem_puani": 0, "transkript": "Hata", "ogretmen_yorumu": str(e)}
@@ -104,9 +114,10 @@ def sesi_analiz_et(audio_bytes, konu, detaylar, status_container):
 init_db()
 if 'admin_logged_in' not in st.session_state: st.session_state['admin_logged_in'] = False
 
-# --- SOL MENÜ ---
+# --- SOL MENÜ (ŞİFRELİ GİRİŞ) ---
 with st.sidebar:
     st.title("🔐 Yönetici Paneli")
+    
     if not st.session_state['admin_logged_in']:
         sifre = st.text_input("Şifre:", type="password")
         if st.button("Giriş Yap"):
@@ -116,59 +127,25 @@ with st.sidebar:
             else:
                 st.error("Hatalı Şifre!")
     else:
-        st.success("Giriş Yapıldı")
-        secim = st.radio("Sayfa:", ["📝 Sınav Ekranı", "📂 Sonuç Arşivi"])
+        st.success("Admin Girişi Yapıldı")
+        secim = st.radio("Sayfa Seçiniz:", ["📝 Sınav Ekranı", "📂 Sonuç Arşivi"])
         if st.button("Çıkış Yap"):
             st.session_state['admin_logged_in'] = False
             st.rerun()
 
-# --- CSS SİHRİ: BUTON VE KAYIT ALANI BÜYÜTME ---
-st.markdown("""
-<style>
-/* 1. SES KAYIT ALANINI BÜYÜTME (ZOOM VE RENKLENDİRME) */
-div[data-testid="stAudioInput"] {
-    transform: scale(1.1); /* %10 Büyüt */
-    transform-origin: left center;
-    border: 3px solid #ef4444; /* Kırmızı Çerçeve */
-    border-radius: 15px;
-    background-color: #fef2f2; /* Açık Kırmızı Arkaplan */
-    padding: 10px;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    margin-bottom: 20px;
-    margin-top: 10px;
-}
-div[data-testid="stAudioInput"] label {
-    font-size: 20px !important;
-    color: #b91c1c !important;
-    font-weight: bold !important;
-}
+# --- MOD SEÇİMİNE GÖRE EKRAN ---
 
-/* 2. BİTİR BUTONUNU DEVASA YAPMA */
-div[data-testid="stButton"] > button {
-    width: 100%;
-    height: 80px;
-    font-size: 26px !important;
-    font-weight: bold !important;
-    background-color: #198754 !important; /* Yeşil */
-    color: white !important;
-    border-radius: 12px;
-    border: none;
-    transition: 0.3s;
-}
-div[data-testid="stButton"] > button:hover {
-    background-color: #146c43 !important;
-    transform: scale(1.02);
-}
-</style>
-""", unsafe_allow_html=True)
-
-# --- MOD 1: SINAV EKRANI ---
+# MOD 1: SINAV EKRANI (İstediğiniz Özel Tasarım)
 if not st.session_state['admin_logged_in'] or (st.session_state['admin_logged_in'] and secim == "📝 Sınav Ekranı"):
+    
+    # [1, 2, 1] Layout ile ortalama
     col_left, col_center, col_right = st.columns([1, 2, 1])
+    
     with col_center:
         st.title("🎤 Dijital Konuşma Sınavı")
         st.markdown("---")
         
+        # Form
         c1, c2 = st.columns(2)
         with c1: ad = st.text_input("Öğrenci Adı Soyadı")
         with c2: no = st.text_input("Sınıf / Numara")
@@ -176,6 +153,7 @@ if not st.session_state['admin_logged_in'] or (st.session_state['admin_logged_in
         konular = konulari_getir()
         secilen_konu = st.selectbox("Konu Seçiniz:", list(konular.keys()), index=None)
         
+        # PLAN KUTUCUKLARI (RENKLİ VE YAN YANA)
         if secilen_konu:
             detay = konular[secilen_konu]
             st.markdown(f"### 📋 {secilen_konu} - Konuşma Planı")
@@ -186,56 +164,96 @@ if not st.session_state['admin_logged_in'] or (st.session_state['admin_logged_in
 
         st.markdown("<br>", unsafe_allow_html=True)
 
+        # SABİT PUANLAMA TABLOSU (HTML)
         rubric_html = """
-        <style>.rubric-table {width: 100%; border-collapse: collapse; font-size: 0.9em; margin-bottom: 20px;} .rubric-table th {background-color: #f8f9fa; border: 1px solid #dee2e6; padding: 8px;} .rubric-table td {border: 1px solid #dee2e6; padding: 8px;}</style>
+        <style>
+            .rubric-table {width: 100%; border-collapse: collapse; font-size: 0.9em; margin-bottom: 20px;}
+            .rubric-table th {background-color: #f8f9fa; border: 1px solid #dee2e6; padding: 8px; text-align: left;}
+            .rubric-table td {border: 1px solid #dee2e6; padding: 8px;}
+        </style>
         <h4>⚖️ Puanlama Kriterleri</h4>
-        <table class="rubric-table"><tr><th>Kriter</th><th>Açıklama</th><th>Puan</th></tr><tr><td><b>İçerik</b></td><td>Konu ve plan</td><td>1-3</td></tr><tr><td><b>Düzen</b></td><td>Bütünlük</td><td>1-3</td></tr><tr><td><b>Dil</b></td><td>Kelime ve gramer</td><td>1-3</td></tr><tr><td><b>Akıcılık</b></td><td>Telaffuz</td><td>1-3</td></tr></table>
+        <table class="rubric-table">
+            <tr><th>Kriter</th><th>Açıklama</th><th>Puan (1-3)</th></tr>
+            <tr><td><b>İçerik</b></td><td>Konuya hakimiyet ve plana uyum</td><td>1 - 3</td></tr>
+            <tr><td><b>Düzen</b></td><td>Giriş, gelişme ve sonuç bütünlüğü</td><td>1 - 3</td></tr>
+            <tr><td><b>Dil</b></td><td>Kelime zenginliği ve gramer</td><td>1 - 3</td></tr>
+            <tr><td><b>Akıcılık</b></td><td>Telaffuz ve tonlama</td><td>1 - 3</td></tr>
+        </table>
         """
         st.markdown(rubric_html, unsafe_allow_html=True)
         
-        st.markdown("### 🎙️ Sınav Kaydı")
-        # Buradaki label CSS ile büyütüldü
-        ses = st.audio_input("🔴 KAYDI BAŞLATMAK İÇİN TIKLAYIN")
+        st.markdown("### 🎙️ Kaydı Başlat")
+        ses = st.audio_input("Mikrofona Tıklayın")
         
-        if ses and secilen_konu:
-            st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("✅ BİTİR VE PUANLA", type="primary"):
-                if not ad: st.warning("İsim giriniz.")
-                else:
-                    with st.status("Değerlendiriliyor...", expanded=True) as status:
-                        ses_data = ses.getvalue()
-                        yol = sesi_kalici_kaydet(ses_data, ad)
-                        sonuc = sesi_analiz_et(ses_data, secilen_konu, konular[secilen_konu], status)
-                        sonuc_kaydet(ad, no, secilen_konu, sonuc.get("transkript"), sonuc.get("yuzluk_sistem_puani"), sonuc, yol)
-                        status.update(label="Tamamlandı", state="complete")
-                        st.balloons()
-                        
-                        st.markdown(f"""<div style="background-color: #dcfce7; border: 2px solid #22c55e; border-radius: 12px; padding: 15px; text-align: center; margin-bottom: 20px;"><h2 style="margin:0; color:#166534;">PUAN: {sonuc.get('yuzluk_sistem_puani')}</h2></div>""", unsafe_allow_html=True)
-                        with st.container(border=True):
-                            st.info(f"**Yorum:** {sonuc.get('ogretmen_yorumu')}")
-                            st.text_area("Metin", sonuc.get("transkript"), height=150)
-                            kp = sonuc.get("kriter_puanlari", {})
-                            st.table(pd.DataFrame({"Kriter": ["İçerik", "Düzen", "Dil", "Akıcılık"], "Puan": [kp.get("konu_icerik"), kp.get("duzen"), kp.get("dil"), kp.get("akicilik")]}).set_index("Kriter"))
-                            st.audio(yol)
+        if ses and secilen_konu and st.button("Bitir ve Puanla", type="primary", use_container_width=True):
+            if not ad: st.warning("İsim giriniz.")
+            else:
+                with st.status("Değerlendiriliyor...", expanded=True) as status:
+                    ses_data = ses.getvalue()
+                    yol = sesi_kalici_kaydet(ses_data, ad)
+                    sonuc = sesi_analiz_et(ses_data, secilen_konu, konular[secilen_konu], status)
+                    sonuc_kaydet(ad, no, secilen_konu, sonuc.get("transkript"), sonuc.get("yuzluk_sistem_puani"), sonuc, yol)
+                    status.update(label="Tamamlandı", state="complete")
+                    st.balloons()
+                    
+                    # BÜYÜK PUAN KARTI
+                    st.markdown(f"""
+                    <div style="background-color: #dcfce7; border: 2px solid #22c55e; border-radius: 12px; padding: 15px; text-align: center; margin-bottom: 20px;">
+                        <h2 style="margin:0; color:#166534;">PUAN: {sonuc.get('yuzluk_sistem_puani')}</h2>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    with st.container(border=True):
+                        st.info(f"**Yorum:** {sonuc.get('ogretmen_yorumu')}")
+                        st.text_area("Metin", sonuc.get("transkript"), height=150)
+                        kp = sonuc.get("kriter_puanlari", {})
+                        st.table(pd.DataFrame({
+                            "Kriter": ["İçerik", "Düzen", "Dil", "Akıcılık"],
+                            "Puan": [kp.get("konu_icerik"), kp.get("duzen"), kp.get("dil"), kp.get("akicilik")]
+                        }).set_index("Kriter"))
+                        st.audio(yol)
 
-# --- MOD 2: ADMİN ---
+# MOD 2: ADMİN ARŞİV EKRANI (Detaylı Görünüm)
 elif st.session_state['admin_logged_in'] and secim == "📂 Sonuç Arşivi":
-    st.title("📂 Arşiv")
+    st.title("📂 Arşiv ve Detaylar")
     df = tum_sonuclari_getir()
+    
     if not df.empty:
-        event = st.dataframe(df[["id", "ad_soyad", "sinif_no", "konu", "puan_100luk", "tarih"]], selection_mode="single-row", on_select="rerun", use_container_width=True, hide_index=True)
+        # İNTERAKTİF TABLO
+        event = st.dataframe(
+            df[["id", "ad_soyad", "sinif_no", "konu", "puan_100luk", "tarih"]],
+            selection_mode="single-row",
+            on_select="rerun",
+            use_container_width=True,
+            hide_index=True
+        )
+        
         if len(event.selection.rows) > 0:
             secilen = df.iloc[event.selection.rows[0]]
             st.divider()
-            c1, c2 = st.columns(2)
-            with c1:
-                st.subheader(secilen['ad_soyad'])
-                if os.path.exists(secilen['ses_yolu']): st.audio(secilen['ses_yolu'])
-                st.text_area("Metin", secilen['konusma_metni'], height=200, disabled=True)
-            with c2:
+            
+            # 2 SÜTUNLU DETAY
+            col_a, col_b = st.columns([1, 1])
+            
+            with col_a:
+                st.subheader(f"👤 {secilen['ad_soyad']}")
+                if os.path.exists(secilen['ses_yolu']):
+                    st.audio(secilen['ses_yolu'])
+                else:
+                    st.error("Ses dosyası silinmiş.")
+                st.text_area("Transkript", secilen['konusma_metni'], height=300, disabled=True)
+                
+            with col_b:
                 st.markdown(f"# Puan: {secilen['puan_100luk']}")
-                detay = json.loads(secilen['detaylar'])
-                st.info(detay.get("ogretmen_yorumu"))
-                kp = detay.get("kriter_puanlari", {})
-                st.table(pd.DataFrame({"Kriter": ["İçerik", "Düzen", "Dil", "Akıcılık"], "Puan": [kp.get("konu_icerik"), kp.get("duzen"), kp.get("dil"), kp.get("akicilik")]}).set_index("Kriter"))
-    else: st.info("Kayıt yok.")
+                try:
+                    detay = json.loads(secilen['detaylar'])
+                    st.info(detay.get("ogretmen_yorumu"))
+                    kp = detay.get("kriter_puanlari", {})
+                    st.table(pd.DataFrame({
+                        "Kriter": ["İçerik", "Düzen", "Dil", "Akıcılık"],
+                        "Puan": [kp.get("konu_icerik"), kp.get("duzen"), kp.get("dil"), kp.get("akicilik")]
+                    }).set_index("Kriter"))
+                except:
+                    st.error("Detay verisi okunamadı.")
+    else:
+        st.info("Kayıt yok.")
