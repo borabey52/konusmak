@@ -91,7 +91,7 @@ def sesi_kalici_kaydet(audio_bytes, ad_soyad):
 def sesi_analiz_et(audio_bytes, konu, detaylar, status_container):
     try:
         model = genai.GenerativeModel('gemini-flash-latest')
-        status_container.update(label="Yapay Zeka Analiz Ediyor...", state="running")
+        status_container.update(label="Sinan Hoca Analiz Ediyor ve Puanlıyor. Bekleyiniz...", state="running")
         
         temp_file = "temp_ses.wav"
         with open(temp_file, "wb") as f: f.write(audio_bytes)
