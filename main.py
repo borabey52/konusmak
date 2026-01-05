@@ -23,11 +23,13 @@ except Exception as e:
 def init_db():
     conn = sqlite3.connect('okul_sinav.db')
     c = conn.cursor()
+    # Şema değişikliği: sinif ve okul_no ayrı sütunlar oldu
     c.execute('''
         CREATE TABLE IF NOT EXISTS sonuclar (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ad_soyad TEXT,
-            sinif_no TEXT,
+            sinif TEXT,
+            okul_no TEXT,
             konu TEXT,
             konusma_metni TEXT,
             puan_100luk INTEGER,
@@ -39,19 +41,27 @@ def init_db():
     conn.commit()
     conn.close()
 
-def sonuc_kaydet(ad, no, konu, metin, puan, detaylar, ses_path):
+# Kayıt fonksiyonu artık sınıf ve numarayı ayrı alıyor
+def sonuc_kaydet(ad, sinif, okul_no, konu, metin, puan, detaylar, ses_path):
     conn = sqlite3.connect('okul_sinav.db')
     c = conn.cursor()
-    c.execute("INSERT INTO sonuclar (ad_soyad, sinif_no, konu, konusma_metni, puan_100luk, detaylar, ses_yolu, tarih) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-              (ad, no, konu, metin, puan, json.dumps(detaylar, ensure_ascii=False), ses_path, datetime.now()))
+    c.execute("""
+        INSERT INTO sonuclar 
+        (ad_soyad, sinif, okul_no, konu, konusma_metni, puan_100luk, detaylar, ses_yolu, tarih) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (ad, sinif, okul_no, konu, metin, puan, json.dumps(detaylar, ensure_ascii=False), ses_path, datetime.now())
+    )
     conn.commit()
     conn.close()
 
 def tum_sonuclari_getir():
     conn = sqlite3.connect('okul_sinav.db')
-    df = pd.read_sql_query("SELECT * FROM sonuclar ORDER BY id DESC", conn)
+    # Veriyi çekerken sınıf ve numaraya göre sıralı gelsin
+    df = pd.read_sql_query("SELECT * FROM sonuclar ORDER BY sinif ASC, okul_no ASC", conn)
     conn.close()
     return df
+
+# ... (konulari_getir, sesi_kalici_kaydet ve sesi_analiz_et fonksiyonları AYNI KALACAK) ...
 
 def konulari_getir():
     dosya_yolu = "konusma_konulari.xlsx"
@@ -145,24 +155,45 @@ if not st.session_state['admin_logged_in'] or (st.session_state['admin_logged_in
         st.title("🎤 Dijital Konuşma Sınavı")
         st.markdown("---")
         
-        # Form
-        c1, c2 = st.columns(2)
-        with c1: ad = st.text_input("Öğrenci Adı Soyadı")
-        with c2: no = st.text_input("Sınıf / Numara")
+        # ... (Başlık kısımları aynı) ...
+    
+        # Form (Ad, Sınıf, Numara ayrıştırıldı)
+        c1, c2, c3 = st.columns([3, 1.5, 1.5])
         
-        konular = konulari_getir()
-        secilen_konu = st.selectbox("Konu Seçiniz:", list(konular.keys()), index=None)
-        
-        # PLAN KUTUCUKLARI (RENKLİ VE YAN YANA)
-        if secilen_konu:
-            detay = konular[secilen_konu]
-            st.markdown(f"### 📋 {secilen_konu} - Konuşma Planı")
-            k1, k2, k3 = st.columns(3)
-            with k1: st.info(f"**1. GİRİŞ**\n\n{detay['Giriş']}")
-            with k2: st.warning(f"**2. GELİŞME**\n\n{detay['Gelişme']}")
-            with k3: st.success(f"**3. SONUÇ**\n\n{detay['Sonuç']}")
+        with c1: 
+            ad = st.text_input("Öğrenci Adı Soyadı")
+        with c2: 
+            # Ortaokul müfredatına uygun şube listesi
+            sinif_listesi = ["5/A", "5/B", "6/A", "6/B", "7/A", "7/B", "8/A", "8/B", "Diğer"]
+            sinif = st.selectbox("Sınıf / Şube", sinif_listesi, index=None)
+        with c3: 
+            numara = st.text_input("Okul No")
 
-        st.markdown("<br>", unsafe_allow_html=True)
+        # ... (Konu seçimi ve Plan kutucukları kodları AYNI) ...
+        
+        # BUTON KISMI GÜNCELLEMESİ
+        if ses and secilen_konu and st.button("Bitir ve Puanla", type="primary", use_container_width=True):
+            if not ad: 
+                st.warning("İsim giriniz.")
+            elif not sinif:
+                st.warning("Sınıf seçiniz.")
+            elif not numara:
+                st.warning("Numara giriniz.")
+            else:
+                with st.status("Değerlendiriliyor...", expanded=True) as status:
+                    ses_data = ses.getvalue()
+                    yol = sesi_kalici_kaydet(ses_data, ad) # Dosya adında hala sadece isim kullanıyoruz, sorun yok
+                    
+                    # Analiz aynı
+                    sonuc = sesi_analiz_et(ses_data, secilen_konu, konular[secilen_konu], status)
+                    
+                    # KAYIT ARTIK AYRI PARAMETRELERLE YAPILIYOR
+                    sonuc_kaydet(ad, sinif, numara, secilen_konu, sonuc.get("transkript"), sonuc.get("yuzluk_sistem_puani"), sonuc, yol)
+                    
+                    status.update(label="Tamamlandı", state="complete")
+                    st.balloons()
+                    
+                    # ... (Puan kartı ve diğer gösterimler AYNI) ...
 
         # SABİT PUANLAMA TABLOSU (HTML)
         rubric_html = """
