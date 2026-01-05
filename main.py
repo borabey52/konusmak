@@ -31,12 +31,18 @@ def get_gcp_creds():
         'https://spreadsheets.google.com/feeds',
         'https://www.googleapis.com/auth/drive'
     ]
-    # Secrets verisini alıp düzenliyoruz
     info = dict(st.secrets["gcp_service_account"])
     
-    # --- KRİTİK DÜZELTME BURADA ---
-    # \n karakterlerini gerçek satır başı ile değiştiriyoruz
-    info["private_key"] = info["private_key"].replace("\\n", "\n")
+    # --- GÜÇLENDİRİLMİŞ DÜZELTME ---
+    # Hem \n karakterlerini düzeltir hem de başta sonda boşluk varsa siler
+    key_raw = info["private_key"]
+    
+    # Eğer kullanıcı BEGIN kısmını yanlışlıkla sildiyse veya kopyalamadıysa hata vermemesi için kontrol:
+    if "-----BEGIN PRIVATE KEY-----" not in key_raw:
+        st.error("HATA: Secrets ayarlarındaki 'private_key' satırında '-----BEGIN PRIVATE KEY-----' başlığı eksik! Lütfen JSON dosyasından tekrar kopyalayın.")
+        st.stop()
+        
+    info["private_key"] = key_raw.replace("\\n", "\n").strip()
     
     creds = ServiceAccountCredentials.from_json_keyfile_dict(info, scope)
     return creds
