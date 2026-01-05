@@ -11,7 +11,7 @@ import time
 st.set_page_config(page_title="Konuşma Sınavı Sistemi", layout="wide", page_icon="🎓")
 
 # Şifre
-ADMIN_SIFRESI = "1234"
+ADMIN_SIFRESI = "ts527001"
 
 # API Key Kontrolü
 try:
