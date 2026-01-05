@@ -112,7 +112,7 @@ def konulari_getir():
 
 def sesi_analiz_et(audio_bytes, konu, detaylar, status_container):
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-latest-flash')
         status_container.update(label="Sinan Hoca Analiz Ediyor ve Puanlıyor. Bekleyiniz...", state="running")
         
         import tempfile
