@@ -160,7 +160,7 @@ if not st.session_state['admin_logged_in'] or (st.session_state['admin_logged_in
         with c1: 
             ad = st.text_input("Öğrenci Adı Soyadı")
         with c2: 
-            sinif_listesi = ["5/A", "5/B", "6/A", "6/B", "7/A", "7/B", "8/A", "8/B", "Diğer"]
+            sinif_listesi = ["5/C", "5/D", "5/E", "6/D", "8/D", "Diğer"]
             sinif = st.selectbox("Sınıf / Şube", sinif_listesi, index=None)
         with c3: 
             numara = st.text_input("Okul No")
