@@ -135,10 +135,9 @@ with st.sidebar:
 
 # --- MOD SEÇİMİNE GÖRE EKRAN ---
 
-# MOD 1: SINAV EKRANI (İstediğiniz Özel Tasarım)
+# MOD 1: SINAV EKRANI
 if not st.session_state['admin_logged_in'] or (st.session_state['admin_logged_in'] and secim == "📝 Sınav Ekranı"):
     
-    # [1, 2, 1] Layout ile ortalama
     col_left, col_center, col_right = st.columns([1, 2, 1])
     
     with col_center:
@@ -153,7 +152,7 @@ if not st.session_state['admin_logged_in'] or (st.session_state['admin_logged_in
         konular = konulari_getir()
         secilen_konu = st.selectbox("Konu Seçiniz:", list(konular.keys()), index=None)
         
-        # PLAN KUTUCUKLARI (RENKLİ VE YAN YANA)
+        # PLAN KUTUCUKLARI
         if secilen_konu:
             detay = konular[secilen_konu]
             st.markdown(f"### 📋 {secilen_konu} - Konuşma Planı")
@@ -164,7 +163,7 @@ if not st.session_state['admin_logged_in'] or (st.session_state['admin_logged_in
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # SABİT PUANLAMA TABLOSU (HTML)
+        # PUANLAMA TABLOSU
         rubric_html = """
         <style>
             .rubric-table {width: 100%; border-collapse: collapse; font-size: 0.9em; margin-bottom: 20px;}
@@ -185,41 +184,65 @@ if not st.session_state['admin_logged_in'] or (st.session_state['admin_logged_in
         st.markdown("### 🎙️ Kaydı Başlat")
         ses = st.audio_input("Mikrofona Tıklayın")
         
-        if ses and secilen_konu and st.button("Bitir ve Puanla", type="primary", use_container_width=True):
-            if not ad: st.warning("İsim giriniz.")
-            else:
-                with st.status("Değerlendiriliyor...", expanded=True) as status:
-                    ses_data = ses.getvalue()
-                    yol = sesi_kalici_kaydet(ses_data, ad)
-                    sonuc = sesi_analiz_et(ses_data, secilen_konu, konular[secilen_konu], status)
-                    sonuc_kaydet(ad, no, secilen_konu, sonuc.get("transkript"), sonuc.get("yuzluk_sistem_puani"), sonuc, yol)
-                    status.update(label="Tamamlandı", state="complete")
-                    st.balloons()
-                    
-                    # BÜYÜK PUAN KARTI
-                    st.markdown(f"""
-                    <div style="background-color: #dcfce7; border: 2px solid #22c55e; border-radius: 12px; padding: 15px; text-align: center; margin-bottom: 20px;">
-                        <h2 style="margin:0; color:#166534;">PUAN: {sonuc.get('yuzluk_sistem_puani')}</h2>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    with st.container(border=True):
-                        st.info(f"**Yorum:** {sonuc.get('ogretmen_yorumu')}")
-                        st.text_area("Metin", sonuc.get("transkript"), height=150)
-                        kp = sonuc.get("kriter_puanlari", {})
-                        st.table(pd.DataFrame({
-                            "Kriter": ["İçerik", "Düzen", "Dil", "Akıcılık"],
-                            "Puan": [kp.get("konu_icerik"), kp.get("duzen"), kp.get("dil"), kp.get("akicilik")]
-                        }).set_index("Kriter"))
-                        st.audio(yol)
+        if ses and secilen_konu:
+            
+            # --- CSS İLE BUTON BÜYÜTME SİHRİ ---
+            st.markdown("""
+            <style>
+            div[data-testid="stButton"] > button {
+                width: 100%;
+                height: 80px;
+                font-size: 25px;
+                font-weight: bold;
+                background-color: #198754;
+                color: white;
+                border-radius: 12px;
+                border: 2px solid #146c43;
+                transition: 0.3s;
+            }
+            div[data-testid="stButton"] > button:hover {
+                background-color: #157347;
+                border-color: #146c43;
+                color: #e2e6ea;
+            }
+            </style>
+            """, unsafe_allow_html=True)
+            # -------------------------------------
 
-# MOD 2: ADMİN ARŞİV EKRANI (Detaylı Görünüm)
+            if st.button("✅ BİTİR VE PUANLA", type="primary"):
+                if not ad: st.warning("İsim giriniz.")
+                else:
+                    with st.status("Değerlendiriliyor...", expanded=True) as status:
+                        ses_data = ses.getvalue()
+                        yol = sesi_kalici_kaydet(ses_data, ad)
+                        sonuc = sesi_analiz_et(ses_data, secilen_konu, konular[secilen_konu], status)
+                        sonuc_kaydet(ad, no, secilen_konu, sonuc.get("transkript"), sonuc.get("yuzluk_sistem_puani"), sonuc, yol)
+                        status.update(label="Tamamlandı", state="complete")
+                        st.balloons()
+                        
+                        # PUAN KARTI
+                        st.markdown(f"""
+                        <div style="background-color: #dcfce7; border: 2px solid #22c55e; border-radius: 12px; padding: 15px; text-align: center; margin-bottom: 20px;">
+                            <h2 style="margin:0; color:#166534;">PUAN: {sonuc.get('yuzluk_sistem_puani')}</h2>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        with st.container(border=True):
+                            st.info(f"**Yorum:** {sonuc.get('ogretmen_yorumu')}")
+                            st.text_area("Metin", sonuc.get("transkript"), height=150)
+                            kp = sonuc.get("kriter_puanlari", {})
+                            st.table(pd.DataFrame({
+                                "Kriter": ["İçerik", "Düzen", "Dil", "Akıcılık"],
+                                "Puan": [kp.get("konu_icerik"), kp.get("duzen"), kp.get("dil"), kp.get("akicilik")]
+                            }).set_index("Kriter"))
+                            st.audio(yol)
+
+# MOD 2: ADMİN ARŞİV EKRANI
 elif st.session_state['admin_logged_in'] and secim == "📂 Sonuç Arşivi":
     st.title("📂 Arşiv ve Detaylar")
     df = tum_sonuclari_getir()
     
     if not df.empty:
-        # İNTERAKTİF TABLO
         event = st.dataframe(
             df[["id", "ad_soyad", "sinif_no", "konu", "puan_100luk", "tarih"]],
             selection_mode="single-row",
@@ -231,8 +254,6 @@ elif st.session_state['admin_logged_in'] and secim == "📂 Sonuç Arşivi":
         if len(event.selection.rows) > 0:
             secilen = df.iloc[event.selection.rows[0]]
             st.divider()
-            
-            # 2 SÜTUNLU DETAY
             col_a, col_b = st.columns([1, 1])
             
             with col_a:
