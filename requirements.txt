@@ -1,5 +1,6 @@
 streamlit
-google-generativeai
-SpeechRecognition
 pandas
-openpyxl
+google-generativeai
+gspread
+oauth2client
+google-api-python-client
