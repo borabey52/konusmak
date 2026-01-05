@@ -23,7 +23,7 @@ try:
 except Exception as e:
     st.error("API Key bulunamadı.")
 
-# --- 2. GOOGLE DRIVE VE SHEETS BAĞLANTISI (HATA ÇÖZÜMLÜ) ---
+# --- 2. GOOGLE BAĞLANTILARI ---
 
 @st.cache_resource
 def get_gcp_creds():
@@ -32,40 +32,23 @@ def get_gcp_creds():
         'https://www.googleapis.com/auth/drive'
     ]
     info = dict(st.secrets["gcp_service_account"])
-    
-    # --- GÜÇLENDİRİLMİŞ DÜZELTME ---
-    # Hem \n karakterlerini düzeltir hem de başta sonda boşluk varsa siler
-    key_raw = info["private_key"]
-    
-    # Eğer kullanıcı BEGIN kısmını yanlışlıkla sildiyse veya kopyalamadıysa hata vermemesi için kontrol:
-    if "-----BEGIN PRIVATE KEY-----" not in key_raw:
-        st.error("HATA: Secrets ayarlarındaki 'private_key' satırında '-----BEGIN PRIVATE KEY-----' başlığı eksik! Lütfen JSON dosyasından tekrar kopyalayın.")
-        st.stop()
-        
-    info["private_key"] = key_raw.replace("\\n", "\n").strip()
-    
+    info["private_key"] = info["private_key"].replace("\\n", "\n")
     creds = ServiceAccountCredentials.from_json_keyfile_dict(info, scope)
     return creds
 
-# Sesi Google Drive'a Yükleyen Fonksiyon
-# --- main.py içindeki bu fonksiyonu tamamen değiştirin ---
-
 def upload_audio_to_drive(audio_bytes, dosya_adi):
-    creds = get_gcp_creds()
-    service = build('drive', 'v3', credentials=creds)
-    
-    # 👇 BURAYI DEĞİŞTİRİN: Linkten aldığınız o karışık kodu tırnak içine yapıştırın
-    klasor_id = "1XhYjXeVdKAOrGJlOr3z_-vE4wZwEY7df" 
-
-    # Dosya Bilgileri
-    file_metadata = {
-        'name': dosya_adi, 
-        'parents': [klasor_id]  # Dosyayı direkt bu ID'li klasöre atar
-    }
-    
-    media = MediaIoBaseUpload(io.BytesIO(audio_bytes), mimetype='audio/wav')
-    
+    # NOT: Google Service Account (Robot) kişisel drive hesaplarında kota sorunu yaşayabilir.
+    # Bu fonksiyon hata verirse ana program bunu yakalayıp devam edecektir.
     try:
+        creds = get_gcp_creds()
+        service = build('drive', 'v3', credentials=creds)
+        
+        # Klasör ID'si (Opsiyonel - Hata verirse kök dizine dener)
+        # Buraya kendi klasör ID'nizi yazabilirsiniz ama Robotun kotası yoksa yine hata verebilir.
+        file_metadata = {'name': dosya_adi}
+        
+        media = MediaIoBaseUpload(io.BytesIO(audio_bytes), mimetype='audio/wav')
+        
         file = service.files().create(
             body=file_metadata, 
             media_body=media, 
@@ -73,29 +56,38 @@ def upload_audio_to_drive(audio_bytes, dosya_adi):
         ).execute()
         
         return file.get('webViewLink')
-        
     except Exception as e:
-        # Hata olursa ekranda sebebini görelim
-        st.error(f"Drive Yükleme Hatası: {str(e)}")
-        # Eğer yetki hatasıysa kullanıcıyı uyaralım
-        if "bD" in str(e) or "404" in str(e) or "403" in str(e):
-             st.warning("İPUCU: Klasörü 'client_email' adresiyle 'Editör' olarak paylaştığınızdan emin olun.")
-        return "Hata"
+        # Hata detayını terminale yazdır ama kullanıcıya gösterme
+        print(f"Drive Upload Hatası: {e}")
+        return "Yüklenemedi (Kota/Yetki Sorunu)"
 
-    # Başlık yoksa ekle
-    if not sheet.row_values(1):
-        sheet.append_row(["Tarih", "Ad Soyad", "Sınıf", "Okul No", "Konu", "Puan", "Drive Ses Linki", "Transkript", "Yorum"])
+def save_to_sheet(data_list):
+    try:
+        creds = get_gcp_creds()
+        client = gspread.authorize(creds)
         
-    sheet.append_row(data_list)
+        # Drive'da 'Sinav_Sonuclari' dosyasını açmaya çalış
+        try:
+            sheet = client.open("Sinav_Sonuclari").sheet1
+        except:
+            st.error("Google Drive'da 'Sinav_Sonuclari' adında bir E-Tablo bulunamadı.")
+            return
+
+        # Başlık kontrolü
+        if not sheet.row_values(1):
+            sheet.append_row(["Tarih", "Ad Soyad", "Sınıf", "Okul No", "Konu", "Puan", "Ses Linki", "Transkript", "Yorum"])
+            
+        sheet.append_row(data_list)
+    except Exception as e:
+        st.error(f"Veritabanı Kayıt Hatası: {str(e)}")
 
 def get_all_results():
-    creds = get_gcp_creds()
-    client = gspread.authorize(creds)
     try:
+        creds = get_gcp_creds()
+        client = gspread.authorize(creds)
         sheet = client.open("Sinav_Sonuclari").sheet1
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
-        # Sınıf ve No'ya göre sıralama (Sütun isimleri Sheets ile eşleşmeli)
         if "Sınıf" in df.columns and "Okul No" in df.columns:
              df = df.sort_values(by=["Sınıf", "Okul No"])
         return df
@@ -104,18 +96,17 @@ def get_all_results():
 
 # --- 3. YARDIMCI FONKSİYONLAR ---
 def konulari_getir():
-    # Hata almamak için statik veri (Tasarımınızdaki ile aynı)
     return {
-        'Teknoloji Bağımlılığı': {'Giriş': 'Bağımlılık tanımı', 'Gelişme': 'Zararları', 'Sonuç': 'Çözüm'},
-        'Doğa Sevgisi': {'Giriş': 'Doğanın önemi', 'Gelişme': 'Faydaları', 'Sonuç': 'Özet'}
+        'Teknoloji Bağımlılığı': {'Giriş': 'Tanım', 'Gelişme': 'Zararlar', 'Sonuç': 'Çözüm'},
+        'Doğa Sevgisi': {'Giriş': 'Önem', 'Gelişme': 'Koruma', 'Sonuç': 'Gelecek'},
+        'Kitap Okuma Alışkanlığı': {'Giriş': 'Fayda', 'Gelişme': 'Yöntemler', 'Sonuç': 'Tavsiye'}
     }
 
 def sesi_analiz_et(audio_bytes, konu, detaylar, status_container):
     try:
-        model = genai.GenerativeModel('gemini-flash-latest')
-        status_container.update(label="Sinan Hoca Analiz Ediyor ve Puanlıyor. Bekleyiniz...", state="running")
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        status_container.update(label="Analiz Yapılıyor...", state="running")
         
-        # Geçici dosya işlemi
         import tempfile
         tfile = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
         tfile.write(audio_bytes)
@@ -127,20 +118,15 @@ def sesi_analiz_et(audio_bytes, konu, detaylar, status_container):
             audio_file = genai.get_file(audio_file.name)
             
         prompt = f"""
-        Rol: Sen uzman bir Türkçe Öğretmenisin.
-        Konu: {konu}. Plan Beklentisi: {detaylar}.
-        
-        Görev:
-        1. Transkript çıkar.
-        2. Kriterleri (İçerik, Düzen, Dil, Akıcılık) 1-3 puanla.
-        3. Puan = (Toplam/12)*100.
-        
-        ÖNEMLİ: Sadece aşağıdaki JSON formatını ver.
+        Rol: Türkçe Öğretmeni.
+        Konu: {konu}.
+        Görev: Ses kaydını değerlendir.
+        Format: SADECE JSON.
         {{
             "transkript": "...",
-            "kriter_puanlari": {{"konu_icerik":0,"duzen":0,"dil":0,"akicilik":0}},
-            "yuzluk_sistem_puani":0,
-            "ogretmen_yorumu":"..."
+            "kriter_puanlari": {{ "konu_icerik": 0, "duzen": 0, "dil": 0, "akicilik": 0 }},
+            "yuzluk_sistem_puani": 0,
+            "ogretmen_yorumu": "..."
         }}
         """
         response = model.generate_content([audio_file, prompt])
@@ -151,170 +137,94 @@ def sesi_analiz_et(audio_bytes, konu, detaylar, status_container):
         end = text.rfind('}') + 1
         return json.loads(text[start:end])
     except Exception as e:
-        return {"yuzluk_sistem_puani": 0, "transkript": f"Hata: {str(e)}", "ogretmen_yorumu": "Analiz yapılamadı."}
+        return {"yuzluk_sistem_puani": 0, "transkript": "Hata", "ogretmen_yorumu": str(e)}
 
-# --- 4. ARAYÜZ (TASARIM KORUNDU) ---
-
+# --- 4. ARAYÜZ ---
 if 'admin_logged_in' not in st.session_state: st.session_state['admin_logged_in'] = False
 
-# --- SOL MENÜ ---
 with st.sidebar:
-    st.title("🔐 Yönetici Paneli")
-    
+    st.title("🔐 Yönetici")
     if not st.session_state['admin_logged_in']:
-        sifre = st.text_input("Şifre:", type="password")
-        if st.button("Giriş Yap"):
-            if sifre == ADMIN_SIFRESI:
-                st.session_state['admin_logged_in'] = True
-                st.rerun()
-            else:
-                st.error("Hatalı Şifre!")
+        if st.button("Giriş") and st.text_input("Şifre", type="password") == ADMIN_SIFRESI:
+            st.session_state['admin_logged_in'] = True
+            st.rerun()
     else:
-        st.success("Giriş Başarılı")
-        secim = st.radio("Sayfa Seçiniz:", ["📝 Sınav Ekranı", "📂 Sonuç Arşivi"])
-        if st.button("Çıkış Yap"):
+        secim = st.radio("Menü", ["Sınav Ekranı", "Sonuç Arşivi"])
+        if st.button("Çıkış"):
             st.session_state['admin_logged_in'] = False
             st.rerun()
 
-# --- MOD SEÇİMİ ---
-
-# MOD 1: SINAV EKRANI
-if not st.session_state['admin_logged_in'] or (st.session_state['admin_logged_in'] and secim == "📝 Sınav Ekranı"):
+# --- EKRANLAR ---
+if not st.session_state['admin_logged_in'] or (st.session_state['admin_logged_in'] and secim == "Sınav Ekranı"):
+    st.title("🎤 Dijital Konuşma Sınavı")
+    st.markdown("---")
     
-    col_left, col_center, col_right = st.columns([1, 2, 1])
+    c1, c2, c3 = st.columns([3, 1.5, 1.5])
+    with c1: ad = st.text_input("Öğrenci Adı Soyadı")
+    with c2: sinif = st.selectbox("Sınıf", ["5/A", "5/B", "5/C", "5/D", "5/E", "6/A", "6/D", "7/A", "8/D", "Diğer"])
+    with c3: no = st.text_input("No")
     
-    with col_center:
-        st.title("🎤 Dijital Konuşma Sınavı")
-        st.markdown("---")
-        
-        # --- Form Alanı (Sizin Tasarımınız) ---
-        c1, c2, c3 = st.columns([3, 1.5, 1.5])
-        
-        with c1: 
-            ad = st.text_input("Öğrenci Adı Soyadı")
-        with c2: 
-            # İsteğiniz üzerine korunan özel liste
-            sinif_listesi = ["5/C", "5/D", "5/E", "6/D", "8/D", "Diğer"]
-            sinif = st.selectbox("Sınıf / Şube", sinif_listesi, index=None)
-        with c3: 
-            numara = st.text_input("Okul No")
-        
-        konular = konulari_getir()
-        secilen_konu = st.selectbox("Konu Seçiniz:", list(konular.keys()), index=None)
-        
-        # PLAN KUTUCUKLARI
-        if secilen_konu:
-            detay = konular[secilen_konu]
-            st.markdown(f"### 📋 {secilen_konu} - Konuşma Planı")
-            k1, k2, k3 = st.columns(3)
-            with k1: st.info(f"**1. GİRİŞ**\n\n{detay['Giriş']}")
-            with k2: st.warning(f"**2. GELİŞME**\n\n{detay['Gelişme']}")
-            with k3: st.success(f"**3. SONUÇ**\n\n{detay['Sonuç']}")
+    konular = konulari_getir()
+    secilen_konu = st.selectbox("Konu", list(konular.keys()), index=None)
+    
+    if secilen_konu:
+        detay = konular[secilen_konu]
+        k1, k2, k3 = st.columns(3)
+        with k1: st.info(f"**Giriş:** {detay['Giriş']}")
+        with k2: st.warning(f"**Gelişme:** {detay['Gelişme']}")
+        with k3: st.success(f"**Sonuç:** {detay['Sonuç']}")
 
-        st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("### 🎙️ Kaydı Başlat")
+    ses = st.audio_input("Mikrofona Tıklayın")
+    
+    if ses and secilen_konu and st.button("Bitir ve Kaydet", type="primary"):
+        if not ad or not sinif or not no:
+            st.warning("Lütfen Ad, Sınıf ve Numara bilgilerini doldurunuz.")
+        else:
+            with st.status("İşlemler yapılıyor...", expanded=True) as status:
+                ses_data = ses.getvalue()
+                
+                # 1. Analiz
+                sonuc = sesi_analiz_et(ses_data, secilen_konu, konular[secilen_konu], status)
+                
+                # 2. Drive'a Yükleme (HATA OLSA BİLE DEVAM EDER)
+                status.write("☁️ Ses dosyası işleniyor...")
+                drive_link = upload_audio_to_drive(ses_data, f"{ad}_{sinif}_{no}.wav")
+                
+                # 3. Kayıt
+                status.write("📝 Sonuçlar kaydediliyor...")
+                save_to_sheet([
+                    datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    ad, sinif, no, secilen_konu,
+                    sonuc.get("yuzluk_sistem_puani"),
+                    drive_link,
+                    sonuc.get("transkript"),
+                    sonuc.get("ogretmen_yorumu")
+                ])
+                
+                status.update(label="Kayıt Başarılı!", state="complete")
+                st.balloons()
+                
+                # Sonuç Kartı
+                st.markdown(f"""
+                <div style="background-color: #dcfce7; border: 2px solid #22c55e; border-radius: 12px; padding: 15px; text-align: center; margin-bottom: 20px;">
+                    <h2 style="margin:0; color:#166534;">PUAN: {sonuc.get('yuzluk_sistem_puani')}</h2>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                with st.container(border=True):
+                    st.info(f"**Yorum:** {sonuc.get('ogretmen_yorumu')}")
+                    st.text_area("Metin", sonuc.get("transkript"), height=100)
 
-        # PUANLAMA TABLOSU (Aynen Korundu)
-        rubric_html = """
-        <style>
-            .rubric-table {width: 100%; border-collapse: collapse; font-size: 0.9em; margin-bottom: 20px;}
-            .rubric-table th {background-color: #f8f9fa; border: 1px solid #dee2e6; padding: 8px; text-align: left;}
-            .rubric-table td {border: 1px solid #dee2e6; padding: 8px;}
-        </style>
-        <h4>⚖️ Puanlama Kriterleri</h4>
-        <table class="rubric-table">
-            <tr><th>Kriter</th><th>Açıklama</th><th>Puan (1-3)</th></tr>
-            <tr><td><b>İçerik</b></td><td>Konuya hakimiyet ve plana uyum</td><td>1 - 3</td></tr>
-            <tr><td><b>Düzen</b></td><td>Giriş, gelişme ve sonuç bütünlüğü</td><td>1 - 3</td></tr>
-            <tr><td><b>Dil</b></td><td>Kelime zenginliği ve gramer</td><td>1 - 3</td></tr>
-            <tr><td><b>Akıcılık</b></td><td>Telaffuz ve tonlama</td><td>1 - 3</td></tr>
-        </table>
-        """
-        st.markdown(rubric_html, unsafe_allow_html=True)
-        
-        st.markdown("### 🎙️ Kaydı Başlat")
-        ses = st.audio_input("Mikrofona Tıklayın")
-        
-        # KAYIT VE PUANLAMA (Hata Korumalı Versiyon)
-        if ses and secilen_konu and st.button("Bitir ve Puanla", type="primary", use_container_width=True):
-            if not ad: st.warning("Lütfen isim giriniz.")
-            elif not sinif: st.warning("Lütfen sınıf seçiniz.")
-            elif not numara: st.warning("Lütfen numara giriniz.")
-            else:
-                with st.status("İşlemler Yapılıyor...", expanded=True) as status:
-                    ses_data = ses.getvalue()
-                    
-                    # 1. Analiz (Gemini)
-                    status.write("🧠 Yapay zeka analiz ediyor...")
-                    sonuc = sesi_analiz_et(ses_data, secilen_konu, konular[secilen_konu], status)
-                    
-                    # 2. Drive'a Yükleme (HATA KORUMASI EKLENDİ)
-                    status.write("☁️ Ses dosyası işleniyor...")
-                    dosya_adi = f"{ad}_{sinif}_{numara}_{datetime.now().strftime('%Y%m%d')}.wav"
-                    
-                    # -- DEĞİŞİKLİK BURADA: Hata olsa bile devam et --
-                    try:
-                        drive_link = upload_audio_to_drive(ses_data, dosya_adi)
-                        # Eğer hata mesajı döndüyse (fonksiyon içindeki try-except'ten)
-                        if "Hata" in drive_link:
-                            drive_link = "Yüklenemedi (Google Kota Sınırı)"
-                    except Exception:
-                        drive_link = "Yüklenemedi (Google Kota Sınırı)"
-                    
-                    # 3. Sheets'e Kaydetme (ARTIK ÇÖKMEZ)
-                    status.write("📝 Sonuçlar veritabanına işleniyor...")
-                    save_to_sheet([
-                        datetime.now().strftime("%Y-%m-%d %H:%M"),
-                        ad, sinif, numara, secilen_konu,
-                        sonuc.get("yuzluk_sistem_puani"),
-                        drive_link, # Link yerine hata mesajı yazar ama kaydeder
-                        sonuc.get("transkript"),
-                        sonuc.get("ogretmen_yorumu")
-                    ])
-                    
-                    status.update(label="Tamamlandı", state="complete")
-                    st.balloons()
-                    
-                    # SONUÇ GÖSTERİMİ
-                    st.markdown(f"""
-                    <div style="background-color: #dcfce7; border: 2px solid #22c55e; border-radius: 12px; padding: 15px; text-align: center; margin-bottom: 20px;">
-                        <h2 style="margin:0; color:#166534;">PUAN: {sonuc.get('yuzluk_sistem_puani')}</h2>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    with st.container(border=True):
-                        st.info(f"**Yorum:** {sonuc.get('ogretmen_yorumu')}")
-                        st.text_area("Metin", sonuc.get("transkript"), height=150)
-                        
-                        kp = sonuc.get("kriter_puanlari", {})
-                        st.table(pd.DataFrame({
-                            "Kriter": ["İçerik", "Düzen", "Dil", "Akıcılık"],
-                            "Puan": [kp.get("konu_icerik"), kp.get("duzen"), kp.get("dil"), kp.get("akicilik")]
-                        }).set_index("Kriter"))
-
-# MOD 2: ADMİN ARŞİV EKRANI (Google Sheets'ten Çeker)
-elif st.session_state['admin_logged_in'] and secim == "📂 Sonuç Arşivi":
-    st.title("📂 Arşiv ve Detaylar (Google Drive)")
+elif st.session_state['admin_logged_in'] and secim == "Sonuç Arşivi":
+    st.title("📂 Arşiv (Google Sheets)")
     df = get_all_results()
-    
     if not df.empty:
-        event = st.dataframe(
-            df,
-            selection_mode="single-row",
-            on_select="rerun",
-            use_container_width=True,
-            hide_index=True
-        )
-        st.info("Veriler doğrudan Google E-Tablolar'dan çekilmektedir.")
+        st.dataframe(df, use_container_width=True)
     else:
-        st.info("Henüz kayıt bulunmamaktadır veya bağlantı kurulamadı.")
+        st.info("Kayıt yok.")
 
-# --- FOOTER ---
+# Footer
 st.markdown("---")
-st.markdown(
-    """
-    <div style="text-align: center; color: #888; padding: 10px; font-size: 0.9em;">
-        © 2026 | Bu uygulama <b>Sinan Sayılır</b> tarafından geliştirilmiş ve kodlanmıştır.
-    </div>
-    """, 
-    unsafe_allow_html=True
-)
+st.markdown("<div style='text-align: center; color: #888;'>© 2026 | Sinan Sayılır</div>", unsafe_allow_html=True)
