@@ -9,7 +9,9 @@ import time
 
 # --- 1. AYARLAR ---
 st.set_page_config(page_title="Konuşma Sınavı Sistemi", layout="wide", page_icon="🎓")
-ADMIN_SIFRESI = "1234"  # <-- YÖNETİCİ ŞİFRESİ
+
+# Şifre
+ADMIN_SIFRESI = "1234"
 
 # API Key Kontrolü
 try:
@@ -17,13 +19,13 @@ try:
         os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
         genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 except Exception as e:
-    pass
+    st.error("API Key bulunamadı.")
 
-# --- 2. VERİTABANI VE DOSYA İŞLEMLERİ ---
+# --- 2. VERİTABANI İŞLEMLERİ (GÜNCELLENDİ) ---
 def init_db():
     conn = sqlite3.connect('okul_sinav.db')
     c = conn.cursor()
-    # Şema değişikliği: sinif ve okul_no ayrı sütunlar oldu
+    # Sınıf ve Okul No artık ayrı sütunlarda
     c.execute('''
         CREATE TABLE IF NOT EXISTS sonuclar (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,7 +43,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Kayıt fonksiyonu artık sınıf ve numarayı ayrı alıyor
 def sonuc_kaydet(ad, sinif, okul_no, konu, metin, puan, detaylar, ses_path):
     conn = sqlite3.connect('okul_sinav.db')
     c = conn.cursor()
@@ -56,13 +57,12 @@ def sonuc_kaydet(ad, sinif, okul_no, konu, metin, puan, detaylar, ses_path):
 
 def tum_sonuclari_getir():
     conn = sqlite3.connect('okul_sinav.db')
-    # Veriyi çekerken sınıf ve numaraya göre sıralı gelsin
+    # Listeleme yaparken sınıfa ve numaraya göre sıralıyoruz
     df = pd.read_sql_query("SELECT * FROM sonuclar ORDER BY sinif ASC, okul_no ASC", conn)
     conn.close()
     return df
 
-# ... (konulari_getir, sesi_kalici_kaydet ve sesi_analiz_et fonksiyonları AYNI KALACAK) ...
-
+# --- 3. YARDIMCI FONKSİYONLAR ---
 def konulari_getir():
     dosya_yolu = "konusma_konulari.xlsx"
     if not os.path.exists(dosya_yolu):
@@ -90,7 +90,7 @@ def sesi_kalici_kaydet(audio_bytes, ad_soyad):
 
 def sesi_analiz_et(audio_bytes, konu, detaylar, status_container):
     try:
-        model = genai.GenerativeModel('gemini-flash-latest')
+        model = genai.GenerativeModel('gemini-1.5-flash')
         status_container.update(label="Yapay Zeka Analiz Ediyor...", state="running")
         
         temp_file = "temp_ses.wav"
@@ -102,8 +102,8 @@ def sesi_analiz_et(audio_bytes, konu, detaylar, status_container):
             audio_file = genai.get_file(audio_file.name)
             
         prompt = f"""
-        Rol: Sen uzaman bir Türkçe Öğretmenisin. Öğrencinin yaptığı konuşmayı kriterlere göre değerlendir. Değerlendirme sırasında öğrencinin plana uymuş olmasına dikkat et. 
-        Konu: {konu}. Plan: {detaylar}.
+        Rol: Sen uzman bir Türkçe Öğretmenisin. Öğrencinin yaptığı konuşmayı kriterlere göre değerlendir.
+        Konu: {konu}. Plan Beklentisi: {detaylar}.
         Görev:
         1. Transkript çıkar.
         2. Kriterleri (İçerik, Düzen, Dil, Akıcılık) 1-3 puanla.
@@ -118,13 +118,13 @@ def sesi_analiz_et(audio_bytes, konu, detaylar, status_container):
         
         return json.loads(response.text.replace("```json","").replace("```","").strip())
     except Exception as e:
-        return {"yuzluk_sistem_puani": 0, "transkript": "Hata", "ogretmen_yorumu": str(e)}
+        return {"yuzluk_sistem_puani": 0, "transkript": "Hata oluştu", "ogretmen_yorumu": str(e)}
 
-# --- 3. ARAYÜZ ---
+# --- 4. ARAYÜZ ---
 init_db()
 if 'admin_logged_in' not in st.session_state: st.session_state['admin_logged_in'] = False
 
-# --- SOL MENÜ (ŞİFRELİ GİRİŞ) ---
+# --- SOL MENÜ ---
 with st.sidebar:
     st.title("🔐 Yönetici Paneli")
     
@@ -137,65 +137,49 @@ with st.sidebar:
             else:
                 st.error("Hatalı Şifre!")
     else:
-        st.success("Admin Girişi Yapıldı")
+        st.success("Giriş Başarılı")
         secim = st.radio("Sayfa Seçiniz:", ["📝 Sınav Ekranı", "📂 Sonuç Arşivi"])
         if st.button("Çıkış Yap"):
             st.session_state['admin_logged_in'] = False
             st.rerun()
 
-# --- MOD SEÇİMİNE GÖRE EKRAN ---
+# --- MOD SEÇİMİ ---
 
-# MOD 1: SINAV EKRANI (İstediğiniz Özel Tasarım)
+# MOD 1: SINAV EKRANI
 if not st.session_state['admin_logged_in'] or (st.session_state['admin_logged_in'] and secim == "📝 Sınav Ekranı"):
     
-    # [1, 2, 1] Layout ile ortalama
     col_left, col_center, col_right = st.columns([1, 2, 1])
     
     with col_center:
         st.title("🎤 Dijital Konuşma Sınavı")
         st.markdown("---")
         
-        # ... (Başlık kısımları aynı) ...
-    
-        # Form (Ad, Sınıf, Numara ayrıştırıldı)
+        # --- GÜNCELLENEN FORM ALANI (3 Sütun) ---
         c1, c2, c3 = st.columns([3, 1.5, 1.5])
         
         with c1: 
             ad = st.text_input("Öğrenci Adı Soyadı")
         with c2: 
-            # Ortaokul müfredatına uygun şube listesi
             sinif_listesi = ["5/A", "5/B", "6/A", "6/B", "7/A", "7/B", "8/A", "8/B", "Diğer"]
             sinif = st.selectbox("Sınıf / Şube", sinif_listesi, index=None)
         with c3: 
             numara = st.text_input("Okul No")
-
-        # ... (Konu seçimi ve Plan kutucukları kodları AYNI) ...
         
-        # BUTON KISMI GÜNCELLEMESİ
-        if ses and secilen_konu and st.button("Bitir ve Puanla", type="primary", use_container_width=True):
-            if not ad: 
-                st.warning("İsim giriniz.")
-            elif not sinif:
-                st.warning("Sınıf seçiniz.")
-            elif not numara:
-                st.warning("Numara giriniz.")
-            else:
-                with st.status("Değerlendiriliyor...", expanded=True) as status:
-                    ses_data = ses.getvalue()
-                    yol = sesi_kalici_kaydet(ses_data, ad) # Dosya adında hala sadece isim kullanıyoruz, sorun yok
-                    
-                    # Analiz aynı
-                    sonuc = sesi_analiz_et(ses_data, secilen_konu, konular[secilen_konu], status)
-                    
-                    # KAYIT ARTIK AYRI PARAMETRELERLE YAPILIYOR
-                    sonuc_kaydet(ad, sinif, numara, secilen_konu, sonuc.get("transkript"), sonuc.get("yuzluk_sistem_puani"), sonuc, yol)
-                    
-                    status.update(label="Tamamlandı", state="complete")
-                    st.balloons()
-                    
-                    # ... (Puan kartı ve diğer gösterimler AYNI) ...
+        konular = konulari_getir()
+        secilen_konu = st.selectbox("Konu Seçiniz:", list(konular.keys()), index=None)
+        
+        # PLAN KUTUCUKLARI
+        if secilen_konu:
+            detay = konular[secilen_konu]
+            st.markdown(f"### 📋 {secilen_konu} - Konuşma Planı")
+            k1, k2, k3 = st.columns(3)
+            with k1: st.info(f"**1. GİRİŞ**\n\n{detay['Giriş']}")
+            with k2: st.warning(f"**2. GELİŞME**\n\n{detay['Gelişme']}")
+            with k3: st.success(f"**3. SONUÇ**\n\n{detay['Sonuç']}")
 
-        # SABİT PUANLAMA TABLOSU (HTML)
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # PUANLAMA TABLOSU
         rubric_html = """
         <style>
             .rubric-table {width: 100%; border-collapse: collapse; font-size: 0.9em; margin-bottom: 20px;}
@@ -216,18 +200,24 @@ if not st.session_state['admin_logged_in'] or (st.session_state['admin_logged_in
         st.markdown("### 🎙️ Kaydı Başlat")
         ses = st.audio_input("Mikrofona Tıklayın")
         
+        # KAYIT VE PUANLAMA
         if ses and secilen_konu and st.button("Bitir ve Puanla", type="primary", use_container_width=True):
-            if not ad: st.warning("İsim giriniz.")
+            if not ad: st.warning("Lütfen isim giriniz.")
+            elif not sinif: st.warning("Lütfen sınıf seçiniz.")
+            elif not numara: st.warning("Lütfen numara giriniz.")
             else:
                 with st.status("Değerlendiriliyor...", expanded=True) as status:
                     ses_data = ses.getvalue()
                     yol = sesi_kalici_kaydet(ses_data, ad)
                     sonuc = sesi_analiz_et(ses_data, secilen_konu, konular[secilen_konu], status)
-                    sonuc_kaydet(ad, no, secilen_konu, sonuc.get("transkript"), sonuc.get("yuzluk_sistem_puani"), sonuc, yol)
+                    
+                    # Veritabanına yeni yapıya uygun kayıt
+                    sonuc_kaydet(ad, sinif, numara, secilen_konu, sonuc.get("transkript"), sonuc.get("yuzluk_sistem_puani"), sonuc, yol)
+                    
                     status.update(label="Tamamlandı", state="complete")
                     st.balloons()
                     
-                    # BÜYÜK PUAN KARTI
+                    # SONUÇ GÖSTERİMİ
                     st.markdown(f"""
                     <div style="background-color: #dcfce7; border: 2px solid #22c55e; border-radius: 12px; padding: 15px; text-align: center; margin-bottom: 20px;">
                         <h2 style="margin:0; color:#166534;">PUAN: {sonuc.get('yuzluk_sistem_puani')}</h2>
@@ -244,15 +234,15 @@ if not st.session_state['admin_logged_in'] or (st.session_state['admin_logged_in
                         }).set_index("Kriter"))
                         st.audio(yol)
 
-# MOD 2: ADMİN ARŞİV EKRANI (Detaylı Görünüm)
+# MOD 2: ADMİN ARŞİV EKRANI
 elif st.session_state['admin_logged_in'] and secim == "📂 Sonuç Arşivi":
     st.title("📂 Arşiv ve Detaylar")
     df = tum_sonuclari_getir()
     
     if not df.empty:
-        # İNTERAKTİF TABLO
+        # Tabloda sınıf ve no sütunlarını başa aldık
         event = st.dataframe(
-            df[["id", "ad_soyad", "sinif_no", "konu", "puan_100luk", "tarih"]],
+            df[["id", "sinif", "okul_no", "ad_soyad", "konu", "puan_100luk", "tarih"]],
             selection_mode="single-row",
             on_select="rerun",
             use_container_width=True,
@@ -263,11 +253,12 @@ elif st.session_state['admin_logged_in'] and secim == "📂 Sonuç Arşivi":
             secilen = df.iloc[event.selection.rows[0]]
             st.divider()
             
-            # 2 SÜTUNLU DETAY
             col_a, col_b = st.columns([1, 1])
             
             with col_a:
                 st.subheader(f"👤 {secilen['ad_soyad']}")
+                st.caption(f"Sınıf: {secilen['sinif']} - No: {secilen['okul_no']}")
+                
                 if os.path.exists(secilen['ses_yolu']):
                     st.audio(secilen['ses_yolu'])
                 else:
@@ -287,9 +278,10 @@ elif st.session_state['admin_logged_in'] and secim == "📂 Sonuç Arşivi":
                 except:
                     st.error("Detay verisi okunamadı.")
     else:
-        st.info("Kayıt yok.")
-# --- 4. FOOTER (ALT BİLGİ) ---
-st.markdown("---") # Ayırıcı çizgi
+        st.info("Henüz kayıt bulunmamaktadır.")
+
+# --- FOOTER ---
+st.markdown("---")
 st.markdown(
     """
     <div style="text-align: center; color: #888; padding: 10px; font-size: 0.9em;">
