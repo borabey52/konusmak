@@ -35,7 +35,6 @@ def get_gcp_creds():
 def save_to_sheet(data_list):
     """
     Sonuçları Google Sheets'e kaydeder.
-    Ses dosyası yükleme olmadığı için çok hızlı ve hatasız çalışır.
     """
     try:
         creds = get_gcp_creds()
@@ -47,7 +46,6 @@ def save_to_sheet(data_list):
             st.error("HATA: Google Drive'da 'Sinav_Sonuclari' adında bir tablo bulunamadı.")
             return
 
-        # Başlıkları Güncelledik: "Ses Linki" yerine "Puan Detayları" geldi
         if not sheet.row_values(1):
             sheet.append_row(["Tarih", "Ad Soyad", "Sınıf", "Okul No", "Konu", "Puan", "Puan Detayları", "Transkript", "Öğretmen Yorumu"])
             
@@ -94,9 +92,13 @@ def konulari_getir():
         return {'Teknoloji Bağımlılığı (Yedek)': {'Giriş': 'Tanım', 'Gelişme': 'Zararlar', 'Sonuç': 'Çözüm'}}
 
 def sesi_analiz_et(audio_bytes, konu, detaylar, status_container):
+    """
+    GÜNCELLENMİŞ FONKSİYON: 
+    - JSON hatalarını önler.
+    - Hata durumunda programın çökmesini engeller.
+    """
     try:
-        # Model ismini güncel ve hızlı olanla sabitleyelim
-        model = genai.GenerativeModel('gemini-1.5-flash') 
+        model = genai.GenerativeModel('gemini-flash-latest')
         status_container.update(label="Sinan Hoca Analiz Ediyor... 🤖", state="running")
         
         import tempfile
@@ -149,18 +151,14 @@ def sesi_analiz_et(audio_bytes, konu, detaylar, status_container):
         
         text = response.text.strip()
         
-        # Olası Markdown temizliği (Garanti olsun diye)
-        if text.startswith("```json"):
-            text = text[7:]
-        if text.startswith("```"):
-            text = text[3:]
-        if text.endswith("```"):
-            text = text[:-3]
+        # Markdown temizliği
+        if text.startswith("```json"): text = text[7:]
+        if text.startswith("```"): text = text[3:]
+        if text.endswith("```"): text = text[:-3]
             
         return json.loads(text)
         
     except Exception as e:
-        # Hata olsa bile programın çökmesini önleyip boş bir sonuç dönüyoruz
         return {
             "yuzluk_sistem_puani": 0, 
             "transkript": f"Sistem Hatası oluştu: {str(e)}. Lütfen tekrar deneyin.", 
@@ -203,37 +201,41 @@ if not st.session_state['admin_logged_in'] or (st.session_state['admin_logged_in
             sinif_listesi = ["5/C", "5/D", "5/E", "6/D", "8/D", "Diğer"]
             sinif = st.selectbox("Sınıf / Şube", sinif_listesi, index=None)
         with c3: numara = st.text_input("Okul No")
-        # --- BURADAN BAŞLA (c3 bloğunun bittiği yerin altı, aynı hizada) ---
         
-        # 1. SINAV HAKKI KONTROLÜ
+        # ------------------ 1. SINAV HAKKI KONTROLÜ (YENİ) ------------------
+        sinav_hakki_var = True 
+        
         if sinif and numara:
-            # Tüm sonuçları getir
+            # 1. Veritabanındaki tüm kayıtları çek
             df_kontrol = get_all_results()
             
             if not df_kontrol.empty:
-                # Sayıları metne çevir ki karşılaştırma hatası olmasın
+                # Veri tiplerini string'e çevir
                 df_kontrol["Okul No"] = df_kontrol["Okul No"].astype(str)
                 
-                # O öğrenciye ait kayıtları bul
-                mevcut_sinavlar = df_kontrol[
+                # 2. Sınıf ve Numaraya göre filtrele
+                ogrenci_kayitlari = df_kontrol[
                     (df_kontrol["Sınıf"] == sinif) & 
                     (df_kontrol["Okul No"] == str(numara))
                 ]
                 
-                sinav_sayisi = len(mevcut_sinavlar)
+                kullanilan_hak = len(ogrenci_kayitlari)
                 
-                if sinav_sayisi >= 2:
-                    st.error(f"🛑 BU ÖĞRENCİNİN SINAV HAKKI DOLMUŞTUR! ({sinav_sayisi}/2)")
-                    st.table(mevcut_sinavlar[["Tarih", "Konu", "Puan"]]) # Eski notlarını kanıt olarak göster
-                    st.stop() # <--- BU KOMUT KODUN GERİSİNİ DURDURUR (Konu seçimi vs. açılmaz)
+                # 3. Kontrol Et
+                if kullanilan_hak >= 2:
+                    st.error(f"🛑 DİKKAT: Bu öğrenci ({sinif} - {numara}) 2 sınav hakkını da kullanmıştır.")
+                    st.dataframe(ogrenci_kayitlari[["Tarih", "Konu", "Puan"]], hide_index=True)
+                    sinav_hakki_var = False
                 else:
-                    st.info(f"✅ Öğrencinin {2 - sinav_sayisi} sınav hakkı kaldı.")
+                    kalan = 2 - kullanilan_hak
+                    st.info(f"ℹ️ Öğrencinin şu ana kadar {kullanilan_hak} sınavı var. (Kalan Hak: {kalan})")
 
-        # --- BURADA BİTİR ---
-
-        # (Senin kodunda zaten var olan satır buradan devam ediyor...)
-        konular = konulari_getir()
-        secilen_konu = st.selectbox("Konu Seçiniz:", list(konular.keys()), index=None)
+        # Eğer hak yoksa kodu durdur
+        if not sinav_hakki_var:
+            st.warning("Sınav hakkı dolduğu için yeni sınav başlatılamaz.")
+            st.stop()
+        # --------------------------------------------------------------------
+        
         konular = konulari_getir()
         secilen_konu = st.selectbox("Konu Seçiniz:", list(konular.keys()), index=None)
         
@@ -278,18 +280,17 @@ if not st.session_state['admin_logged_in'] or (st.session_state['admin_logged_in
                     # 1. Analiz
                     sonuc = sesi_analiz_et(ses_data, secilen_konu, konular.get(secilen_konu,{}), status)
                     
-                    # 2. DETAYLARI HAZIRLA (Ses linki yerine bu gidecek)
+                    # 2. DETAYLARI HAZIRLA
                     kp = sonuc.get("kriter_puanlari", {})
-                    # Örn: "İçerik: 3 | Düzen: 2 | Dil: 3 | Akıcılık: 2"
                     detay_metni = f"İçerik: {kp.get('konu_icerik')} | Düzen: {kp.get('duzen')} | Dil: {kp.get('dil')} | Akıcılık: {kp.get('akicilik')}"
                     
-                    # 3. KAYIT (HIZLI VE HATASIZ)
+                    # 3. KAYIT
                     status.write("📝 Sonuçlar kaydediliyor...")
                     save_to_sheet([
                         datetime.now().strftime("%Y-%m-%d %H:%M"),
                         ad, sinif, numara, secilen_konu,
                         sonuc.get("yuzluk_sistem_puani"),
-                        detay_metni, # ARTIK LİNK DEĞİL DETAY GİDİYOR
+                        detay_metni,
                         sonuc.get("transkript"),
                         sonuc.get("ogretmen_yorumu")
                     ])
