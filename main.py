@@ -95,7 +95,8 @@ def konulari_getir():
 
 def sesi_analiz_et(audio_bytes, konu, detaylar, status_container):
     try:
-        model = genai.GenerativeModel('gemini-flash-latest')
+        # Model ismini güncel ve hızlı olanla sabitleyelim
+        model = genai.GenerativeModel('gemini-1.5-flash') 
         status_container.update(label="Sinan Hoca Analiz Ediyor... 🤖", state="running")
         
         import tempfile
@@ -104,30 +105,68 @@ def sesi_analiz_et(audio_bytes, konu, detaylar, status_container):
         tfile.close()
         
         audio_file = genai.upload_file(tfile.name)
+        
+        # Dosya işlenene kadar bekle
         while audio_file.state.name == "PROCESSING":
-            time.sleep(0.5)
+            time.sleep(1)
             audio_file = genai.get_file(audio_file.name)
             
         prompt = f"""
-        Rol: Türkçe Öğretmeni.
-        Konu: {konu}. Plan: {detaylar}.
-        Görev:
-        1. Transkript çıkar.
-        2. Kriterleri (İçerik, Düzen, Dil, Akıcılık) 1-3 puanla.
-        3. Puan = (Toplam/12)*100.
+        Sen bir Türkçe Öğretmenisin.
+        Konu: {konu}. 
+        Beklenen Plan: {detaylar}.
         
-        JSON Çıktısı:
-        {{ "transkript": "...", "kriter_puanlari": {{"konu_icerik":0,"duzen":0,"dil":0,"akicilik":0}}, "yuzluk_sistem_puani":0, "ogretmen_yorumu":"..." }}
+        GÖREVLER:
+        1. Ses kaydının transkriptini çıkar.
+        2. Şu kriterlere göre 1-3 arası puan ver: İçerik, Düzen, Dil, Akıcılık.
+        3. Toplam puanı 100'lük sisteme çevir.
+        4. Öğrenciye motive edici kısa bir yorum yaz.
+        
+        ÇOK ÖNEMLİ KURAL:
+        Cevabı SADECE aşağıdaki JSON formatında ver. Başka hiçbir metin veya markdown (```json gibi) ekleme.
+        Anahtarlar (key) mutlaka çift tırnak (") içinde olmalı.
+        
+        {{
+            "transkript": "...",
+            "kriter_puanlari": {{
+                "konu_icerik": 0,
+                "duzen": 0,
+                "dil": 0,
+                "akicilik": 0
+            }},
+            "yuzluk_sistem_puani": 0,
+            "ogretmen_yorumu": "..."
+        }}
         """
-        response = model.generate_content([audio_file, prompt])
+        
+        # JSON formatını garantiye almak için generation_config kullanıyoruz
+        response = model.generate_content(
+            [audio_file, prompt],
+            generation_config={"response_mime_type": "application/json"}
+        )
+        
         os.remove(tfile.name)
         
-        text = response.text
-        start = text.find('{')
-        end = text.rfind('}') + 1
-        return json.loads(text[start:end])
+        text = response.text.strip()
+        
+        # Olası Markdown temizliği (Garanti olsun diye)
+        if text.startswith("```json"):
+            text = text[7:]
+        if text.startswith("```"):
+            text = text[3:]
+        if text.endswith("```"):
+            text = text[:-3]
+            
+        return json.loads(text)
+        
     except Exception as e:
-        return {"yuzluk_sistem_puani": 0, "transkript": "Hata", "ogretmen_yorumu": str(e)}
+        # Hata olsa bile programın çökmesini önleyip boş bir sonuç dönüyoruz
+        return {
+            "yuzluk_sistem_puani": 0, 
+            "transkript": f"Sistem Hatası oluştu: {str(e)}. Lütfen tekrar deneyin.", 
+            "ogretmen_yorumu": "Analiz sırasında teknik bir aksaklık oldu.",
+            "kriter_puanlari": {"konu_icerik":0,"duzen":0,"dil":0,"akicilik":0}
+        }
 
 # --- 4. ARAYÜZ ---
 if 'admin_logged_in' not in st.session_state: st.session_state['admin_logged_in'] = False
