@@ -164,7 +164,37 @@ if not st.session_state['admin_logged_in'] or (st.session_state['admin_logged_in
             sinif_listesi = ["5/C", "5/D", "5/E", "6/D", "8/D", "Diğer"]
             sinif = st.selectbox("Sınıf / Şube", sinif_listesi, index=None)
         with c3: numara = st.text_input("Okul No")
+        # --- BURADAN BAŞLA (c3 bloğunun bittiği yerin altı, aynı hizada) ---
         
+        # 1. SINAV HAKKI KONTROLÜ
+        if sinif and numara:
+            # Tüm sonuçları getir
+            df_kontrol = get_all_results()
+            
+            if not df_kontrol.empty:
+                # Sayıları metne çevir ki karşılaştırma hatası olmasın
+                df_kontrol["Okul No"] = df_kontrol["Okul No"].astype(str)
+                
+                # O öğrenciye ait kayıtları bul
+                mevcut_sinavlar = df_kontrol[
+                    (df_kontrol["Sınıf"] == sinif) & 
+                    (df_kontrol["Okul No"] == str(numara))
+                ]
+                
+                sinav_sayisi = len(mevcut_sinavlar)
+                
+                if sinav_sayisi >= 2:
+                    st.error(f"🛑 BU ÖĞRENCİNİN SINAV HAKKI DOLMUŞTUR! ({sinav_sayisi}/2)")
+                    st.table(mevcut_sinavlar[["Tarih", "Konu", "Puan"]]) # Eski notlarını kanıt olarak göster
+                    st.stop() # <--- BU KOMUT KODUN GERİSİNİ DURDURUR (Konu seçimi vs. açılmaz)
+                else:
+                    st.info(f"✅ Öğrencinin {2 - sinav_sayisi} sınav hakkı kaldı.")
+
+        # --- BURADA BİTİR ---
+
+        # (Senin kodunda zaten var olan satır buradan devam ediyor...)
+        konular = konulari_getir()
+        secilen_konu = st.selectbox("Konu Seçiniz:", list(konular.keys()), index=None)
         konular = konulari_getir()
         secilen_konu = st.selectbox("Konu Seçiniz:", list(konular.keys()), index=None)
         
